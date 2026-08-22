@@ -333,7 +333,7 @@ async def tick_forward_test(
 
     return TickResult(
         run_id=run.id,
-        bars_processed=len(candles),
+        bars_processed=len(new_candles),
         fills=[
             {
                 "side": a.side,

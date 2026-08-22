@@ -1,6 +1,18 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, backtests, data, forward_tests, health, market, optimizations, paper, quant, strategies, strategies_polish
+from app.api.v1 import (
+    auth,
+    backtests,
+    data,
+    forward_tests,
+    health,
+    market,
+    optimizations,
+    paper,
+    quant,
+    strategies,
+    strategies_polish,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)

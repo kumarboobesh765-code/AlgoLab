@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.optimizer import OptConfig, apply_params, generate_param_grid, run_grid_search, run_walk_forward
 from app.marketdata.base import Candle
+from app.optimizer import OptConfig, apply_params, generate_param_grid, run_grid_search, run_walk_forward
 from app.quant.schema import StrategyDefinition
 
 T0 = datetime(2026, 8, 3, 9, 15, tzinfo=UTC)

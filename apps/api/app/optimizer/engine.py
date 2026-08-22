@@ -12,10 +12,8 @@ Walk-forward:
   - Reports both train and test metrics so overfitting is visible
 """
 
-import copy
 import itertools
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
 
 from app.backtest import BacktestConfig, run_backtest
 from app.marketdata.base import Candle

@@ -13,7 +13,6 @@ from app.schemas.strategy import (
     StrategyVersionOut,
     VersionCreate,
 )
-
 from app.templates import get_templates
 
 router = APIRouter(tags=["strategies"])
