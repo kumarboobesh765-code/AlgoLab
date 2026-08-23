@@ -228,13 +228,7 @@ export default function ReplayPage() {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to replay backtests.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );

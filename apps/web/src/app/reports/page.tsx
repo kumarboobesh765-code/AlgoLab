@@ -136,13 +136,7 @@ export default function ReportsPage() {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to view strategy reports.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -206,7 +200,9 @@ export default function ReportsPage() {
 
             <div className="lg:col-span-2">
               <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Latest backtest {lb && `(v${lb.config?.["version"] ?? "?"}, ${lb.trades_count} trades)`}
+                Latest backtest{" "}
+                {lb &&
+                  `(${new Date(lb.created_at).toLocaleDateString("en-IN")}, ${lb.trades_count} trades)`}
               </h3>
               {lb && s ? (
                 <>

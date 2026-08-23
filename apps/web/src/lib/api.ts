@@ -514,3 +514,100 @@ export interface ReplayCandle {
   close: number;
   volume: number;
 }
+
+// ---- ai builder ----
+
+export interface AiDraftResponse {
+  definition: Record<string, unknown>;
+  source: "llm" | "rules";
+  valid: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface StrategyTemplate {
+  name: string;
+  description: string;
+  tags: string[];
+  definition: Record<string, unknown>;
+}
+
+// ------------------------------------------------------------- Options Lab
+
+export interface OptionLegInput {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike_offset: number;
+  lots: number;
+}
+
+export interface PayoffLeg extends OptionLegInput {
+  strike: number;
+  premium: number;
+  iv_pct: number;
+  delta: number;
+  gamma: number;
+  theta_per_day: number;
+  vega: number;
+}
+
+export interface PayoffPoint {
+  price: number;
+  pnl: number;
+}
+
+export interface PayoffMetricsOut {
+  net_premium: number;
+  max_profit: number | null; // null = uncapped
+  max_loss: number | null;
+  breakevens: number[];
+  risk_reward: number | null;
+}
+
+export interface NetGreeks {
+  delta: number;
+  gamma: number;
+  theta_per_day: number;
+  vega: number;
+}
+
+export interface PayoffResponse {
+  underlying: string;
+  spot: number;
+  atm_strike: number;
+  expiry: string;
+  dte_days: number;
+  lot_size: number;
+  is_demo: boolean;
+  provider: string;
+  legs: PayoffLeg[];
+  curve: PayoffPoint[];
+  metrics: PayoffMetricsOut;
+  net_greeks: NetGreeks;
+}
+
+export interface MonteCarloBin {
+  lo: number;
+  hi: number;
+  count: number;
+}
+
+export interface MonteCarloStats {
+  mean: number;
+  std: number;
+  median: number;
+  p5: number;
+  p95: number;
+  worst: number;
+  best: number;
+  prob_profit: number;
+  var_95: number;
+}
+
+export interface MonteCarloResponse {
+  stats: MonteCarloStats;
+  bins: MonteCarloBin[];
+  paths: number;
+  vol_used_pct: number;
+  horizon_days: number;
+}

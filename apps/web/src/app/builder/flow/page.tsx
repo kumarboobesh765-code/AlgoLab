@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/Card";
 import MetaPanel from "@/components/builder/MetaPanel";
@@ -13,6 +12,7 @@ import ConditionGroupEditor, {
 import { PreviewPanel, ValidationPanel } from "@/components/builder/ValidationPanel";
 import { EMPTY_META, useBuilderWorkflow, type StrategyMeta } from "@/lib/builder-workflow";
 import { emptyDefinition, quickIssues, TIMEFRAMES, type StrategyDefinitionV1 } from "@/lib/builders";
+import { useAppSettings } from "@/lib/settings";
 
 function FlowNode({
   step,
@@ -65,8 +65,11 @@ export default function StrategyFlowPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const workflow = useBuilderWorkflow();
+  const savedTimeframe = useAppSettings().timeframe;
   const [meta, setMeta] = useState<StrategyMeta>(EMPTY_META);
-  const [definition, setDefinition] = useState<StrategyDefinitionV1>(emptyDefinition());
+  const [definition, setDefinition] = useState<StrategyDefinitionV1>(() =>
+    emptyDefinition(savedTimeframe),
+  );
   const [editing, setEditing] = useState(false);
 
   const indicatorIds = useMemo(() => definition.indicators.map((i) => i.id), [definition]);
@@ -93,13 +96,7 @@ export default function StrategyFlowPage() {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to build strategies.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -139,6 +136,14 @@ export default function StrategyFlowPage() {
             {workflow.previewing ? "Previewing…" : "Preview signals"}
           </button>
           <button
+            onClick={() => workflow.validate(definition)}
+            disabled={workflow.validating || localIssues.length > 0}
+            title={localIssues.length > 0 ? localIssues[0] : undefined}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {workflow.validating ? "Validating…" : "Validate"}
+          </button>
+          <button
             onClick={handleSave}
             disabled={!meta.name.trim() || localIssues.length > 0 || workflow.saving}
             title={localIssues.length > 0 ? localIssues[0] : !meta.name.trim() ? "Enter a strategy name" : undefined}
@@ -153,6 +158,12 @@ export default function StrategyFlowPage() {
         <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-200">
           {workflow.saveError ?? localIssues.join(" · ")}
         </p>
+      )}
+
+      {workflow.validation && (
+        <Card title="Validation">
+          <ValidationPanel validation={workflow.validation} validating={workflow.validating} />
+        </Card>
       )}
 
       {editing ? (
@@ -193,6 +204,7 @@ export default function StrategyFlowPage() {
             <IndicatorsEditor
               definition={definition.indicators}
               catalog={workflow.catalog}
+              catalogError={workflow.catalogError}
               onChange={(indicators) => setDefinition({ ...definition, indicators })}
             />
           </Card>

@@ -15,13 +15,29 @@ class CandleOut(BaseModel):
 
 
 class InstrumentOut(BaseModel):
+    """Provider instrument record.
+
+    Core identity fields are required; everything else varies by adapter
+    (demo vs Dhan) so they are optional to keep validation lossless.
+    """
+
     symbol: str
     name: str
     exchange: str
     segment: str  # index | equity | futures | options
-    base_price: float
-    lot_size: int
-    strike_step: int
+    security_id: str | None = None
+    exchange_segment: str | None = None
+    underlying: str | None = None
+    instrument_type: str | None = None
+    expiry: str | None = None
+    strike: float | None = None
+    option_type: str | None = None
+    lot_size: int | None = None
+    tick_size: float | None = None
+    strike_step: int | None = None
+    base_price: float | None = None
+    expiry_code: int | None = None
+    status: str | None = None
 
 
 class OptionChainRow(BaseModel):

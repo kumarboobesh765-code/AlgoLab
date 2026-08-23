@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import type { PaperAccount, PaperAccountDetail, PaperPosition, Strategy } from "@/lib/api";
@@ -8,9 +8,15 @@ import { useAuth } from "@/lib/auth";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { downloadCsv } from "@/lib/csv";
 
 function fmtMoney(n: number): string {
   return `${n < 0 ? "-" : ""}₹${Math.abs(Math.round(n)).toLocaleString("en-IN")}`;
+}
+
+function pctOf(part: number, whole: number): string {
+  if (whole <= 0) return "0.00";
+  return ((part / whole) * 100).toFixed(2);
 }
 
 interface PositionRow extends PaperPosition {
@@ -26,8 +32,10 @@ export default function PortfolioPage() {
   const [details, setDetails] = useState<Record<string, PaperAccountDetail>>({});
   const [strategies, setStrategies] = useState<Strategy[]>([]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!auth.user) return;
+    setLoading(true);
+    setError(null);
     let loaded: PaperAccount[] = [];
     api<PaperAccount[]>("/paper/accounts")
       .then((accs) => {
@@ -55,6 +63,11 @@ export default function PortfolioPage() {
       });
   }, [auth.user]);
 
+  useEffect(() => {
+    // Defer via microtask so the effect body itself never calls setState
+    Promise.resolve().then(load);
+  }, [load]);
+
   const data = useMemo(() => {
     const strategyNames = new Map(strategies.map((s) => [s.id, s.name]));
     const rows: PositionRow[] = [];
@@ -80,18 +93,27 @@ export default function PortfolioPage() {
   }, [accounts, details, strategies]);
 
   if (!auth.user) {
-    return <p className="text-sm text-slate-500">Sign in to view your portfolio.</p>;
+    return <p className="text-sm text-slate-500">Connecting to the API…</p>;
   }
   if (loading) return <p className="text-sm text-slate-500">Loading portfolio…</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-900">Portfolio</h2>
-        <p className="text-sm text-slate-500">
-          Consolidated paper-trading capital and open positions across all accounts.
-        </p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">Portfolio</h2>
+          <p className="text-sm text-slate-500">
+            Consolidated paper-trading capital and open positions across all accounts.
+          </p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -101,7 +123,7 @@ export default function PortfolioPage() {
           label="Current equity"
           value={fmtMoney(data.equity)}
           tone={data.equity >= data.initial ? "positive" : "negative"}
-          hint={`${data.equity >= data.initial ? "+" : ""}${data.initial > 0 ? (((data.equity - data.initial) / data.initial) * 100).toFixed(2) : "0.00"}% overall`}
+          hint={`${data.equity >= data.initial ? "+" : ""}${pctOf(data.equity - data.initial, data.initial)}% overall`}
         />
         <MetricCard
           label="Unrealized P&L"
@@ -110,7 +132,29 @@ export default function PortfolioPage() {
         />
       </div>
 
-      <Card title="Open positions" subtitle={`${data.rows.length} position(s) across ${accounts.length} account(s)`}>
+      <Card
+        title="Open positions"
+        subtitle={`${data.rows.length} position(s) across ${accounts.length} account(s)`}
+        actions={
+          data.rows.length > 0 ? (
+            <button
+              onClick={() =>
+                downloadCsv(
+                  "open_positions.csv",
+                  ["account", "strategy", "direction", "qty", "entry", "last", "unrealized_pnl"],
+                  data.rows.map((p) => [
+                    p.accountName, p.strategyName, p.direction, p.quantity,
+                    p.entry_price, p.last_close ?? "", p.unrealized_pnl ?? "",
+                  ]),
+                )
+              }
+              className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+            >
+              Export CSV
+            </button>
+          ) : undefined
+        }
+      >
         {data.rows.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-400">
             No open positions. Start a forward test or place paper trades.
@@ -183,7 +227,7 @@ export default function PortfolioPage() {
                     <div className="flex justify-between">
                       <dt>Equity</dt>
                       <dd className={`tabular-nums font-medium ${pnl >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                        {d ? `${fmtMoney(d.equity)} (${pnl >= 0 ? "+" : ""}${(((pnl) / a.initial_capital) * 100).toFixed(2)}%)` : "…"}
+                        {d ? `${fmtMoney(d.equity)} (${pnl >= 0 ? "+" : ""}${pctOf(pnl, a.initial_capital)}%)` : "…"}
                       </dd>
                     </div>
                     <div className="flex justify-between">

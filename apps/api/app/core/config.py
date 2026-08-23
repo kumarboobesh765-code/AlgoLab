@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
+    # False (default): single-user local mode — every request maps to a shared
+    # local account and the UI never shows the login screen. Set AUTH_ENABLED=true
+    # for multi-user deployments (register/login required).
+    AUTH_ENABLED: bool = False
+
     # demo until Dhan credentials are configured
     MARKET_DATA_PROVIDER: str = "demo"
 
@@ -35,6 +40,20 @@ class Settings(BaseSettings):
 
     # Option-chain cache
     OPTION_CHAIN_CACHE_TTL: int = 20
+
+    # AI Builder: any OpenAI-compatible API. No key -> deterministic rule-based parser.
+    AI_API_KEY: str | None = None
+    AI_BASE_URL: str = "https://api.openai.com/v1"
+    AI_MODEL: str = "gpt-4o-mini"
+
+    # Alerts: Telegram bot and/or generic webhook. Both unset -> notifications disabled.
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_CHAT_ID: str | None = None
+    ALERT_WEBHOOK_URL: str | None = None
+
+    # Background scheduler that auto-ticks running forward tests.
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_INTERVAL_SEC: int = 60
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 

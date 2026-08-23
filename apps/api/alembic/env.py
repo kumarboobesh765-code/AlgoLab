@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.session import normalize_database_url
 from app.models import BacktestRun, PaperAccount, Strategy, StrategyVersion, User  # noqa: F401
 
 config = context.config
@@ -17,7 +18,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Runtime DATABASE_URL (env) overrides the value in alembic.ini.
-database_url = get_settings().DATABASE_URL
+database_url = normalize_database_url(get_settings().DATABASE_URL)
 config.set_main_option("sqlalchemy.url", database_url)
 
 

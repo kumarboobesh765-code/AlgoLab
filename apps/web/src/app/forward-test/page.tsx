@@ -24,20 +24,27 @@ export default function ForwardTestPage() {
   const [accountId, setAccountId] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ticking, setTicking] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [tickingId, setTickingId] = useState<string | null>(null);
   const [tickResult, setTickResult] = useState<TickResult | null>(null);
 
   const refresh = useCallback(() => {
-    api<ForwardTestRun[]>("/forward-tests").then(setRuns).catch(() => {});
-    api<Strategy[]>("/strategies").then((all) => {
-      const withDef = all.filter((s) => s.definition !== null);
-      setStrategies(withDef);
-      if (withDef.length > 0) setStrategyId((cur) => cur || withDef[0].id);
-    }).catch(() => {});
-    api<PaperAccount[]>("/paper/accounts").then((accs) => {
-      setAccounts(accs);
-      if (accs.length > 0) setAccountId((cur) => cur || accs[0].id);
-    }).catch(() => {});
+    api<ForwardTestRun[]>("/forward-tests")
+      .then(setRuns)
+      .catch((e) => setLoadError(e instanceof Error ? e.message : "Could not load forward tests"));
+    api<Strategy[]>("/strategies")
+      .then((all) => {
+        const withDef = all.filter((s) => s.definition !== null);
+        setStrategies(withDef);
+        if (withDef.length > 0) setStrategyId((cur) => cur || withDef[0].id);
+      })
+      .catch(() => {});
+    api<PaperAccount[]>("/paper/accounts")
+      .then((accs) => {
+        setAccounts(accs);
+        if (accs.length > 0) setAccountId((cur) => cur || accs[0].id);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -62,7 +69,7 @@ export default function ForwardTestPage() {
   }
 
   async function tick(runId: string) {
-    setTicking(true);
+    setTickingId(runId);
     setError(null);
     try {
       const result = await api<TickResult>(`/forward-tests/${runId}/tick`, { method: "POST" });
@@ -71,13 +78,13 @@ export default function ForwardTestPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Tick failed");
     } finally {
-      setTicking(false);
+      setTickingId(null);
     }
   }
 
   async function transition(runId: string, action: "pause" | "resume" | "stop") {
     try {
-      const run = await api<ForwardTestRun>(`/forward-tests/${runId}/${action}`, { method: "POST" });
+      await api<ForwardTestRun>(`/forward-tests/${runId}/${action}`, { method: "POST" });
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : `${action} failed`);
@@ -87,9 +94,16 @@ export default function ForwardTestPage() {
   const running = runs.filter((r) => r.status === "running");
   const paused = runs.filter((r) => r.status === "paused");
   const stopped = runs.filter((r) => r.status === "stopped");
+  const strategyName = (id: string) =>
+    strategies.find((s) => s.id === id)?.name ?? `Strategy ${id.slice(0, 8)}…`;
 
   return (
     <div className="space-y-4">
+      {loadError && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-200">
+          {loadError}
+        </p>
+      )}
       <Card
         title="Start a Forward Test"
         subtitle="Run a strategy against a paper account on stored candles. Tick processes new bars since the last tick."
@@ -149,7 +163,7 @@ export default function ForwardTestPage() {
                   <span className="flex items-center gap-2">
                     <Badge tone={r.status === "running" ? "green" : "amber"}>{r.status}</Badge>
                     <span className="font-medium text-slate-700">
-                      Strategy {r.strategy_id.slice(0, 8)}... v{r.version_number}
+                      {strategyName(r.strategy_id)} · v{r.version_number}
                     </span>
                     <span className="text-slate-400">{new Date(r.started_at).toLocaleString()}</span>
                   </span>
@@ -158,16 +172,26 @@ export default function ForwardTestPage() {
                       <>
                         <button
                           onClick={() => tick(r.id)}
-                          disabled={ticking}
+                          disabled={tickingId === r.id}
                           className="rounded border border-sky-200 px-2 py-0.5 text-sky-600 hover:bg-sky-50 disabled:opacity-50"
                         >
-                          Tick
+                          {tickingId === r.id ? "Ticking…" : "Tick"}
                         </button>
                         <button
                           onClick={() => transition(r.id, "pause")}
                           className="rounded border border-amber-200 px-2 py-0.5 text-amber-600 hover:bg-amber-50"
                         >
                           Pause
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm("Stop this forward test? Any open position will be force-closed at the last price.")) {
+                              transition(r.id, "stop");
+                            }
+                          }}
+                          className="rounded border border-red-200 px-2 py-0.5 text-red-600 hover:bg-red-50"
+                        >
+                          Stop
                         </button>
                       </>
                     )}
@@ -250,7 +274,7 @@ export default function ForwardTestPage() {
                 <span className="flex items-center gap-2">
                   <Badge tone="red">stopped</Badge>
                   <span className="text-slate-500">
-                    Strategy {r.strategy_id.slice(0, 8)}... stopped {r.stopped_at ? new Date(r.stopped_at).toLocaleString() : "-"}
+                    {strategyName(r.strategy_id)} stopped {r.stopped_at ? new Date(r.stopped_at).toLocaleString() : "-"}
                   </span>
                 </span>
                 {r.last_message && <p className="mt-1 text-[11px] text-slate-400">{r.last_message}</p>}

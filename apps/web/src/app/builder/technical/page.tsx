@@ -1,82 +1,112 @@
 ﻿"use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/Card";
 import MetaPanel from "@/components/builder/MetaPanel";
 import { PreviewPanel, ValidationPanel } from "@/components/builder/ValidationPanel";
 import { EMPTY_META, useBuilderWorkflow, type StrategyMeta } from "@/lib/builder-workflow";
-import { emptyDefinition, type StrategyDefinitionV1 } from "@/lib/builders";
+import {
+  emptyDefinition,
+  STRATEGY_EDIT_KEY,
+  TEMPLATE_HANDOFF_KEY,
+  TEMPLATE_HANDOFF_NAME,
+  type StrategyDefinitionV1,
+} from "@/lib/builders";
+import { useAppSettings } from "@/lib/settings";
 
-const TEMPLATE = JSON.stringify(
-  {
-    version: 1,
-    timeframe: "5m",
-    instrument: { symbol: "NIFTY", exchange: "NSE", segment: "index" },
-    variables: [{ name: "fast_len", value: 9 }],
-    indicators: [
-      { id: "ema_fast", type: "EMA", params: { length: { var: "fast_len" } } },
-      { id: "ema_slow", type: "EMA", params: { length: 21 } },
-      { id: "rsi", type: "RSI", params: { length: 14 } },
-    ],
-    entry: {
-      logic: "ALL",
-      conditions: [
-        {
-          left: { kind: "indicator", ref: "ema_fast" },
-          op: "CROSS_ABOVE",
-          right: { kind: "indicator", ref: "ema_slow" },
-        },
-        {
-          left: { kind: "indicator", ref: "rsi.rsi" },
-          op: "GT",
-          right: { kind: "constant", value: 50 },
-        },
+export { TEMPLATE_HANDOFF_KEY, TEMPLATE_HANDOFF_NAME };
+
+function templateJson(timeframe: string): string {
+  return JSON.stringify(
+    {
+      version: 1,
+      timeframe,
+      instrument: { symbol: "NIFTY", exchange: "NSE", segment: "index" },
+      variables: [{ name: "fast_len", value: 9 }],
+      indicators: [
+        { id: "ema_fast", type: "EMA", params: { length: { var: "fast_len" } } },
+        { id: "ema_slow", type: "EMA", params: { length: 21 } },
+        { id: "rsi", type: "RSI", params: { length: 14 } },
       ],
+      entry: {
+        logic: "ALL",
+        conditions: [
+          {
+            left: { kind: "indicator", ref: "ema_fast" },
+            op: "CROSS_ABOVE",
+            right: { kind: "indicator", ref: "ema_slow" },
+          },
+          {
+            left: { kind: "indicator", ref: "rsi.rsi" },
+            op: "GT",
+            right: { kind: "constant", value: 50 },
+          },
+        ],
+      },
+      exit: {
+        logic: "ANY",
+        conditions: [
+          {
+            left: { kind: "indicator", ref: "ema_fast" },
+            op: "CROSS_BELOW",
+            right: { kind: "indicator", ref: "ema_slow" },
+          },
+        ],
+      },
+      risk: { stop_loss_pct: 1.0, target_pct: 2.0, trailing_sl_pct: null },
+      position: {
+        direction: "long_only",
+        quantity_type: "fixed",
+        quantity: 1,
+        capital_pct: null,
+      },
     },
-    exit: {
-      logic: "ANY",
-      conditions: [
-        {
-          left: { kind: "indicator", ref: "ema_fast" },
-          op: "CROSS_BELOW",
-          right: { kind: "indicator", ref: "ema_slow" },
-        },
-      ],
-    },
-    risk: { stop_loss_pct: 1.0, target_pct: 2.0, trailing_sl_pct: null },
-    position: {
-      direction: "long_only",
-      quantity_type: "fixed",
-      quantity: 1,
-      capital_pct: null,
-    },
-  },
-  null,
-  2,
-);
+    null,
+    2,
+  );
+}
 
 export default function TechnicalBuilderPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const workflow = useBuilderWorkflow();
+  const savedTimeframe = useAppSettings().timeframe;
   const [meta, setMeta] = useState<StrategyMeta>(EMPTY_META);
-  const [text, setText] = useState(TEMPLATE);
+  const [text, setText] = useState(() => templateJson(savedTimeframe));
   const [parseError, setParseError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Handoff from Strategy Library ("View JSON" / "Edit") — read via microtask
+  // so the effect body itself never calls setState (react-compiler rule).
+  useEffect(() => {
+    let raw: string | null = null;
+    let name: string | null = null;
+    let editId: string | null = null;
+    try {
+      raw = sessionStorage.getItem(TEMPLATE_HANDOFF_KEY);
+      name = sessionStorage.getItem(TEMPLATE_HANDOFF_NAME);
+      editId = sessionStorage.getItem(STRATEGY_EDIT_KEY);
+      if (raw !== null) sessionStorage.removeItem(TEMPLATE_HANDOFF_KEY);
+      if (name !== null) sessionStorage.removeItem(TEMPLATE_HANDOFF_NAME);
+      if (editId !== null) sessionStorage.removeItem(STRATEGY_EDIT_KEY);
+    } catch {
+      return;
+    }
+    if (raw === null && editId === null) return;
+    Promise.resolve().then(() => {
+      if (raw !== null) setText(raw);
+      if (name) setMeta((m) => ({ ...m, name }));
+      if (editId !== null) setEditingId(editId);
+    });
+  }, []);
 
   if (!authLoading && !user) {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to build strategies.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -106,7 +136,7 @@ export default function TechnicalBuilderPage() {
     const def = parseDefinition();
     if (!def) return;
     try {
-      const created = await workflow.save(meta, def);
+      const created = await workflow.save(meta, def, editingId ?? undefined);
       router.push(`/strategies?created=${encodeURIComponent(created.name)}`);
     } catch {
       /* saveError rendered below */
@@ -119,18 +149,20 @@ export default function TechnicalBuilderPage() {
         <div>
           <h1 className="text-lg font-semibold text-slate-800">Technical Builder</h1>
           <p className="text-xs text-slate-400">
-            Edit the canonical definition JSON directly — full power, no guardrails.
+            {editingId
+              ? "Editing an existing strategy — saving updates it (a new version is created)."
+              : "Edit the canonical definition JSON directly — full power, no guardrails."}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setText(JSON.stringify(emptyDefinition(), null, 2))}
+            onClick={() => setText(JSON.stringify(emptyDefinition(savedTimeframe), null, 2))}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
           >
             Empty template
           </button>
           <button
-            onClick={() => setText(TEMPLATE)}
+            onClick={() => setText(templateJson(savedTimeframe))}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
           >
             EMA cross example
@@ -170,10 +202,17 @@ export default function TechnicalBuilderPage() {
         <MetaPanel meta={meta} onChange={setMeta} />
       </Card>
 
-      <Card
-        title="Definition JSON"
-        subtitle="Schema v1 — see docs/strategy-definition.md for the full contract"
-      >
+      <Card title="Definition JSON">
+        <div className="mb-2 flex justify-end">
+          <a
+            href="/docs/strategy-definition.md"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-sky-600 hover:text-sky-700"
+          >
+            Schema v1 reference ↗
+          </a>
+        </div>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}

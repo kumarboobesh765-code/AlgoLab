@@ -24,7 +24,9 @@ export default function PaperAccountsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    api<PaperAccount[]>("/paper/accounts").then(setAccounts).catch(() => {});
+    api<PaperAccount[]>("/paper/accounts")
+      .then(setAccounts)
+      .catch((e: Error) => setError(e.message));
   }, []);
 
   useEffect(() => {
@@ -54,12 +56,25 @@ export default function PaperAccountsPage() {
     }
   }
 
+  async function deleteAccount(a: PaperAccount) {
+    if (!window.confirm(`Delete paper account “${a.name}” and all its orders/positions?`)) return;
+    setError(null);
+    try {
+      await api(`/paper/accounts/${a.id}`, { method: "DELETE" });
+      if (selected?.id === a.id) setSelected(null);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete account");
+    }
+  }
+
   async function loadDetail(id: string) {
+    setError(null);
     try {
       const detail = await api<PaperAccountDetail>(`/paper/accounts/${id}`);
       setSelected(detail);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load account details");
     }
   }
 
@@ -119,10 +134,10 @@ export default function PaperAccountsPage() {
         ) : (
           <ul className="divide-y divide-slate-100">
             {accounts.map((a) => (
-              <li key={a.id}>
+              <li key={a.id} className="flex items-center gap-2">
                 <button
                   onClick={() => loadDetail(a.id)}
-                  className="flex w-full items-center justify-between gap-3 py-2 text-left text-xs hover:bg-slate-50"
+                  className="flex flex-1 items-center justify-between gap-3 py-2 text-left text-xs hover:bg-slate-50"
                 >
                   <span className="flex items-center gap-2">
                     <Badge tone={a.status === "active" ? "green" : "red"}>{a.status}</Badge>
@@ -131,6 +146,13 @@ export default function PaperAccountsPage() {
                   <span className="text-slate-500">
                     Cash: {fmtMoney(a.cash_balance)} / Initial: {fmtMoney(a.initial_capital)}
                   </span>
+                </button>
+                <button
+                  onClick={() => deleteAccount(a)}
+                  title={`Delete ${a.name}`}
+                  className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-50"
+                >
+                  Delete
                 </button>
               </li>
             ))}
@@ -142,7 +164,17 @@ export default function PaperAccountsPage() {
         <Card
           title={selected.name}
           subtitle={`Equity: ${fmtMoney(selected.equity)} | Unrealized: ${fmtMoney(selected.unrealized_pnl)}`}
-          actions={<Badge tone="green">Paper</Badge>}
+          actions={
+            <div className="flex items-center gap-2">
+              <Badge tone="green">Paper</Badge>
+              <button
+                onClick={() => setSelected(null)}
+                className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          }
         >
           <div className="mb-4 grid gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
@@ -205,6 +237,46 @@ export default function PaperAccountsPage() {
                         </td>
                         <td className="py-1 pr-3">{p.stop_price ?? "-"}</td>
                         <td className="py-1">{p.target_price ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {selected.closed_positions.length > 0 && (
+            <>
+              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Closed Positions
+              </h3>
+              <div className="mb-3 overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-slate-400">
+                    <tr>
+                      <th className="py-1 pr-3">Direction</th>
+                      <th className="py-1 pr-3">Qty</th>
+                      <th className="py-1 pr-3">Entry</th>
+                      <th className="py-1 pr-3">Exit</th>
+                      <th className="py-1 pr-3">Reason</th>
+                      <th className="py-1">Realized P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody className="tabular-nums">
+                    {selected.closed_positions.map((p) => (
+                      <tr key={p.id} className="border-t border-slate-100">
+                        <td className="py-1 pr-3">
+                          <Badge tone={p.direction === "long" ? "green" : "amber"}>{p.direction}</Badge>
+                        </td>
+                        <td className="py-1 pr-3">{p.quantity}</td>
+                        <td className="py-1 pr-3">{p.entry_price}</td>
+                        <td className="py-1 pr-3">{p.exit_price ?? "-"}</td>
+                        <td className="py-1 pr-3">{p.exit_reason ?? "-"}</td>
+                        <td
+                          className={`py-1 font-medium ${(p.realized_pnl ?? 0) >= 0 ? "text-emerald-600" : "text-red-600"}`}
+                        >
+                          {p.realized_pnl !== undefined ? fmtMoney(p.realized_pnl) : "-"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

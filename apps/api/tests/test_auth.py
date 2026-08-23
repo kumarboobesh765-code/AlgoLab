@@ -38,3 +38,9 @@ async def test_login_wrong_password_unauthorized(client):
 async def test_me_requires_token(client):
     resp = await client.get("/api/v1/auth/me")
     assert resp.status_code == 401
+
+
+async def test_guest_forbidden_when_auth_enabled(client):
+    """AUTH_ENABLED=true (test env) → guest access is rejected."""
+    resp = await client.post("/api/v1/auth/guest")
+    assert resp.status_code == 403

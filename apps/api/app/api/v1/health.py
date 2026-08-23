@@ -34,6 +34,7 @@ async def health(db: DbSession) -> dict:
         "app": settings.APP_NAME,
         "env": settings.APP_ENV,
         "database": database_status,
+        "auth_enabled": settings.AUTH_ENABLED,
         "market_data_provider": provider_name,
         "market_data_is_demo": is_demo,
         "market_data_provider_configured": provider_configured,

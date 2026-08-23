@@ -11,7 +11,13 @@ from app.marketdata.base import ProviderError
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
+    from app.services.scheduler import start_scheduler, stop_scheduler
+
+    start_scheduler(app)
+    try:
+        yield
+    finally:
+        await stop_scheduler()
 
 
 def create_app() -> FastAPI:

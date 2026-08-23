@@ -154,7 +154,7 @@ See [.env.example](.env.example). Key values:
 
 ```powershell
 cd apps/api
-uv run pytest -v        # 157 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer
+uv run pytest -v        # 180 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer, forward-test API, AI drafting, alerts
 cd apps/web
 npm run lint            # ESLint (react-hooks, next)
 npm run build           # type-check + production build of all 24 routes
@@ -172,8 +172,9 @@ Phases follow the master plan:
 6. ✅ **Forward testing + paper accounts** — incremental tick engine, virtual capital, equity tracking, start/tick/pause/resume/stop lifecycle
 7. ✅ **Optimization** — grid search + walk-forward analysis with parameter range sweep and overfitting detection
 8. ✅ **Polish** — Reports UI, version comparison, JSON import/export, trade replay/debugger
+9. ✅ **Platform extras** — Analytics / Market Scanner / Portfolio pages, AI Builder (`POST /ai/draft-strategy`, LLM-first with deterministic rule-based fallback), Strategy Library, Settings, forward-test auto-tick scheduler, Telegram/webhook alerts
 
-Remaining (post-roadmap): Analytics, Market Scanner and Portfolio pages are still placeholders.
+Remaining (post-roadmap): DhanHQ live verification (4 `LIVE-VERIFY` markers need real credentials), options analytics (Greeks/payoffs), and broker execution behind a kill switch.
 
 ## Disclaimer
 

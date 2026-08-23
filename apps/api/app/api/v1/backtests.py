@@ -196,3 +196,25 @@ async def get_backtest(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest run not found")
     return run
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_backtest(
+    run_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    result = await db.execute(
+        select(BacktestRun).where(
+            BacktestRun.id == run_id, BacktestRun.user_id == current_user.id
+        )
+    )
+    run = result.scalars().first()
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest run not found")
+    if run.status == "running":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Cannot delete a run that is still executing"
+        )
+    await db.delete(run)
+    await db.commit()

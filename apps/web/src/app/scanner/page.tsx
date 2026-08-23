@@ -8,6 +8,7 @@ import { emptyDefinition } from "@/lib/builders";
 import type { StrategyDefinitionV1 } from "@/lib/builders";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
+import { downloadCsv } from "@/lib/csv";
 
 interface ScanRow {
   symbol: string;
@@ -150,6 +151,8 @@ export default function ScannerPage() {
   const [timeframe, setTimeframe] = useState("5m");
   const [bars, setBars] = useState(500);
   const [scanning, setScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [syncing, setSyncing] = useState(false);
   const [results, setResults] = useState<ScanRow[] | null>(null);
 
   useEffect(() => {
@@ -172,46 +175,62 @@ export default function ScannerPage() {
 
   function resync() {
     setError(null);
-    setLoading(true);
+    setSyncing(true);
     api<{ synced: number }>("/data/instruments/sync", { method: "POST" })
       .then(() => api<Instrument[]>("/data/instruments"))
       .then((list) => {
         setInstruments(list);
-        setLoading(false);
+        setSyncing(false);
       })
       .catch((e: Error) => {
         setError(e.message);
-        setLoading(false);
+        setSyncing(false);
       });
   }
 
   function scan() {
     if (symbols.length === 0 || scanning) return;
     setScanning(true);
+    setScanProgress(0);
     setResults(null);
     setError(null);
     const preset = PRESETS.find((p) => p.id === presetId)!;
-    const rows: ScanRow[] = [];
-    (async () => {
-      for (const symbol of symbols) {
+    const rows: ScanRow[] = new Array(symbols.length);
+    let done = 0;
+    const queue = symbols.map((symbol, idx) => ({ symbol, idx }));
+    const CONCURRENCY = 4;
+
+    const worker = async (): Promise<void> => {
+      while (queue.length > 0) {
+        const item = queue.shift();
+        if (!item) break;
         try {
-          const def = preset.build(timeframe, symbol);
+          const def = preset.build(timeframe, item.symbol);
           const resp = await api<PreviewResponse>(
             `/quant/preview?bars=${bars}`,
             { method: "POST", body: JSON.stringify(def) },
           );
-          rows.push({ symbol, resp });
+          rows[item.idx] = { symbol: item.symbol, resp };
         } catch (e) {
-          rows.push({ symbol, err: e instanceof Error ? e.message : String(e) });
+          rows[item.idx] = { symbol: item.symbol, err: e instanceof Error ? e.message : String(e) };
         }
+        done += 1;
+        const finished = done;
+        Promise.resolve().then(() => setScanProgress(finished));
       }
-      setResults(rows);
+    };
+
+    (async () => {
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker()),
+      );
+      setResults(rows.filter(Boolean));
       setScanning(false);
     })();
   }
 
   if (!auth.user) {
-    return <p className="text-sm text-slate-500">Sign in to use the scanner.</p>;
+    return <p className="text-sm text-slate-500">Connecting to the API…</p>;
   }
   if (loading && instruments.length === 0)
     return <p className="text-sm text-slate-500">Loading instruments…</p>;
@@ -231,10 +250,10 @@ export default function ScannerPage() {
         <Card title="No instruments" subtitle="The scanner needs the instrument master synced first.">
           <button
             onClick={resync}
-            disabled={loading}
+            disabled={syncing}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            Sync instrument master
+            {syncing ? "Syncing…" : "Sync instrument master"}
           </button>
         </Card>
       ) : (
@@ -289,7 +308,9 @@ export default function ScannerPage() {
                 {scanning ? "Scanning…" : "Run scan"}
               </button>
               {scanning && (
-                <span className="text-xs text-slate-500">Evaluating {symbols.length} instruments…</span>
+                <span className="text-xs text-slate-500">
+                  Evaluating {scanProgress}/{symbols.length} instruments…
+                </span>
               )}
             </div>
           </Card>
@@ -305,6 +326,26 @@ export default function ScannerPage() {
                   {results.some((r) => r.resp?.is_demo) && (
                     <Badge tone="amber">demo data</Badge>
                   )}
+                  <button
+                    onClick={() =>
+                      downloadCsv(
+                        `scan_${presetId}.csv`,
+                        ["symbol", "bars", "entry_signals", "exit_signals", "tail_value", "matched"],
+                        results.map((row) => {
+                          const t = PRESETS.find((p) => p.id === presetId)?.tail;
+                          const v = row.resp && t ? row.resp.indicator_tail[t.id]?.[t.output] : null;
+                          return [
+                            row.symbol, row.resp?.bars_evaluated ?? "", row.resp?.entry_signals ?? "",
+                            row.resp?.exit_signals ?? "", v == null ? "" : Number(v).toFixed(2),
+                            row.resp?.last_bar_entry_signal ? "yes" : "no",
+                          ];
+                        }),
+                      )
+                    }
+                    className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                  >
+                    Export CSV
+                  </button>
                   <Badge tone={matches > 0 ? "green" : "slate"}>
                     {matches > 0 ? `${matches} match(es)` : "no matches"}
                   </Badge>

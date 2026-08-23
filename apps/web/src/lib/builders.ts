@@ -1,5 +1,11 @@
 import type { IndicatorCatalogEntry, QuantCatalog } from "@/lib/api";
 
+// sessionStorage keys used to hand a definition JSON to the Technical Builder
+export const TEMPLATE_HANDOFF_KEY = "strategylab_template_json";
+export const TEMPLATE_HANDOFF_NAME = "strategylab_template_name";
+// sessionStorage key carrying the strategy id when editing (save = PUT)
+export const STRATEGY_EDIT_KEY = "strategylab_edit_id";
+
 // Canonical strategy-definition v1 types (mirrors apps/api/app/quant/schema.py)
 
 export interface Operand {
@@ -76,10 +82,10 @@ export const PRICE_SOURCES = [
 
 export const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1d"] as const;
 
-export function emptyDefinition(): StrategyDefinitionV1 {
+export function emptyDefinition(timeframe: string = "5m"): StrategyDefinitionV1 {
   return {
     version: 1,
-    timeframe: "5m",
+    timeframe,
     instrument: { symbol: "NIFTY", exchange: "NSE", segment: "index" },
     variables: [],
     indicators: [],

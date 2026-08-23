@@ -1,3 +1,8 @@
+import os
+
+# Tests exercise real multi-user auth; the dev default is single-user mode.
+os.environ["AUTH_ENABLED"] = "true"
+
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine

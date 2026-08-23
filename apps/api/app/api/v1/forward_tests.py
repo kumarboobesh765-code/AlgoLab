@@ -12,12 +12,14 @@ from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUser, DbSession
 from app.models import ForwardTestRun, PaperAccount, PaperOrder, PaperPosition, Strategy
 from app.paper import required_warmup, step_paper
 from app.quant.schema import StrategyDefinition
 from app.schemas.paper import ForwardTestCreate, ForwardTestOut, TickResult
+from app.services.alerts import notify_async
 from app.services.candles import load_candles
 from app.services.validation import ensure_utc
 
@@ -239,7 +241,11 @@ async def tick_forward_test(
     run = await _owned_run(db, current_user.id, run_id)
     if run.status != "running":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Run is {run.status}, not running")
+    return await execute_tick(db, run)
 
+
+async def execute_tick(db: AsyncSession, run: ForwardTestRun) -> TickResult:
+    """Core tick logic, shared by the HTTP endpoint and the background scheduler."""
     strategy, account, definition = await _run_context(db, run)
 
     open_pos = (
@@ -316,6 +322,8 @@ async def tick_forward_test(
         "; ".join(msgs)[:500] if msgs else f"processed {len(new_candles)} bars, no action"
     )
     await db.commit()
+    if msgs:
+        notify_async(f"StrategyLab fill — {strategy.name}: {run.last_message}")
 
     now_open = (
         (
@@ -355,6 +363,7 @@ async def _set_status(db: DbSession, run: ForwardTestRun, new_status: str) -> Fo
     strategy = await db.get(Strategy, run.strategy_id)
     if strategy is not None:
         strategy.status = new_status
+    forced_close_pnl: float | None = None
     if new_status == "stopped":
         run.stopped_at = datetime.now(UTC)
         run.pending_action = None
@@ -408,8 +417,17 @@ async def _set_status(db: DbSession, run: ForwardTestRun, new_status: str) -> Fo
                             signal_time=last.timestamp,
                         )
                     )
+                    forced_close_pnl = pnl
     await db.commit()
     await db.refresh(run)
+    if new_status == "stopped":
+        name = strategy.name if strategy is not None else f"strategy {run.strategy_id}"
+        detail = (
+            f" Forced close realized P&L {forced_close_pnl:+.2f}."
+            if forced_close_pnl is not None
+            else ""
+        )
+        notify_async(f"StrategyLab forward test stopped — {name}.{detail}")
     return run
 
 

@@ -2,13 +2,14 @@
 
 import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   api,
   type Strategy,
   type StrategyExportPayload,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { STRATEGY_EDIT_KEY, TEMPLATE_HANDOFF_KEY, TEMPLATE_HANDOFF_NAME } from "@/lib/builders";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/Badge";
 
@@ -42,6 +43,7 @@ export default function StrategiesPage() {
 
 function StrategiesContent() {
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const createdName = searchParams.get("created");
   const [strategies, setStrategies] = useState<Strategy[] | null>(null);
@@ -85,6 +87,40 @@ function StrategiesContent() {
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  function handleViewJson(s: Strategy) {
+    if (!s.definition) return;
+    try {
+      sessionStorage.setItem(TEMPLATE_HANDOFF_KEY, JSON.stringify(s.definition, null, 2));
+      sessionStorage.setItem(TEMPLATE_HANDOFF_NAME, s.name);
+      sessionStorage.removeItem(STRATEGY_EDIT_KEY);
+      router.push("/builder/technical");
+    } catch {
+      setError("Could not open the definition in the Technical Builder.");
+    }
+  }
+
+  function handleEdit(s: Strategy) {
+    if (!s.definition) return;
+    try {
+      sessionStorage.setItem(TEMPLATE_HANDOFF_KEY, JSON.stringify(s.definition, null, 2));
+      sessionStorage.setItem(TEMPLATE_HANDOFF_NAME, s.name);
+      sessionStorage.setItem(STRATEGY_EDIT_KEY, s.id);
+      router.push("/builder/technical");
+    } catch {
+      setError("Could not open the strategy in the Technical Builder.");
+    }
+  }
+
+  async function handleClone(id: string) {
+    try {
+      const copy = await api<Strategy>(`/strategies/${id}/clone`, { method: "POST" });
+      setNotice(`Created “${copy.name}”.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Clone failed");
     }
   }
 
@@ -147,13 +183,7 @@ function StrategiesContent() {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to manage your strategies.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -326,6 +356,47 @@ function StrategiesContent() {
                         >
                           Report
                         </Link>
+                        {s.definition ? (
+                          <button
+                            onClick={() => handleEdit(s)}
+                            title="Edit this strategy in the Technical Builder (saves back to the same strategy)"
+                            className="rounded border border-indigo-200 px-1.5 py-0.5 text-[11px] text-indigo-600 hover:bg-indigo-50"
+                          >
+                            Edit
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            title="Add a definition first"
+                            className="cursor-not-allowed rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-400"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        {s.definition ? (
+                          <button
+                            onClick={() => handleViewJson(s)}
+                            title="Open this definition in the Technical Builder"
+                            className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                          >
+                            View JSON
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            title="Add a definition first"
+                            className="cursor-not-allowed rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-400"
+                          >
+                            View JSON
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleClone(s.id)}
+                          title="Duplicate this strategy"
+                          className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                        >
+                          Clone
+                        </button>
                         <button
                           onClick={() => handleExport(s.id, s.name)}
                           className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"

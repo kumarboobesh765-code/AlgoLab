@@ -24,6 +24,7 @@ Order matters: static routes (e.g., /templates) must come before parameterized (
 | forward_tests.py | /forward-tests | Lifecycle: create/tick/pause/resume/stop |
 | optimizations.py | /optimizations | Grid search + walk-forward |
 | strategies_polish.py | (various) | Templates, export/import, report, compare |
+| ai.py | /ai | AI strategy drafting (LLM-first, rule-based fallback) |
 | health.py | /health | Liveness/readiness |
 
 ## Dependencies (app/core/deps.py)
@@ -64,7 +65,7 @@ Validated by `validate_definition()` which returns (errors, warnings).
 
 ## Testing
 ```powershell
-uv run pytest -q                    # run all 157 tests
+uv run pytest -q                    # run all 180 tests
 uv run pytest tests/test_foo.py     # run one file
 uv run pytest -k "test_name"        # run by name
 uv run ruff check .                 # lint

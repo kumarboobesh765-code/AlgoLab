@@ -210,7 +210,7 @@ async def delete_account(
     ).scalars().first()
     if active is not None:
         raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_409_CONFLICT,
             "Stop the running forward test before deleting this account",
         )
     await db.delete(account)

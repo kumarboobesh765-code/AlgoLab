@@ -56,6 +56,7 @@ export default function DataManagerPage() {
   const [search, setSearch] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // ingestion form
   const [symbol, setSymbol] = useState("NIFTY");
@@ -69,9 +70,15 @@ export default function DataManagerPage() {
   const [qualitySymbol, setQualitySymbol] = useState("NIFTY");
   const [qualityInterval, setQualityInterval] = useState("5m");
   const [quality, setQuality] = useState<QualityReport | null>(null);
+  const [checkingQuality, setCheckingQuality] = useState(false);
 
   const refreshStatus = useCallback(() => {
-    api<DataStatus>("/data/status").then(setStatus).catch(() => {});
+    api<DataStatus>("/data/status")
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((e: Error) => setError(`Could not load data status — ${e.message}`));
   }, []);
 
   useEffect(() => {
@@ -81,6 +88,7 @@ export default function DataManagerPage() {
   const syncInstruments = async () => {
     setSyncing(true);
     setMessage(null);
+    setError(null);
     try {
       const r = await api<{ received: number; inserted_or_updated: number; provider: string }>(
         "/data/instruments/sync",
@@ -91,7 +99,7 @@ export default function DataManagerPage() {
       setInstruments(list);
       refreshStatus();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Sync failed");
+      setError(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncing(false);
     }
@@ -101,7 +109,7 @@ export default function DataManagerPage() {
     api<Instrument[]>("/data/instruments")
       .then(setInstruments)
       .catch(() => {
-        /* not synced yet */
+        /* empty until first sync */
       });
   }, []);
 
@@ -109,6 +117,7 @@ export default function DataManagerPage() {
     setIngesting(true);
     setIngestResult(null);
     setMessage(null);
+    setError(null);
     try {
       const r = await api<IngestResult>("/data/history/ingest", {
         method: "POST",
@@ -117,21 +126,25 @@ export default function DataManagerPage() {
       setIngestResult(r);
       refreshStatus();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Ingestion failed");
+      setError(e instanceof Error ? e.message : "Ingestion failed");
     } finally {
       setIngesting(false);
     }
   };
 
   const runQuality = async () => {
+    setCheckingQuality(true);
     setQuality(null);
+    setError(null);
     try {
       const r = await api<QualityReport>(
         `/data/quality/${encodeURIComponent(qualitySymbol)}?interval=${qualityInterval}&days=30`,
       );
       setQuality(r);
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Quality check failed");
+      setError(e instanceof Error ? e.message : "Quality check failed");
+    } finally {
+      setCheckingQuality(false);
     }
   };
 
@@ -147,6 +160,11 @@ export default function DataManagerPage() {
       {message && (
         <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700 ring-1 ring-inset ring-blue-200">
           {message}
+        </p>
+      )}
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-inset ring-red-200">
+          {error}
         </p>
       )}
 
@@ -336,9 +354,10 @@ export default function DataManagerPage() {
           </label>
           <button
             onClick={runQuality}
-            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            disabled={checkingQuality}
+            className="rounded-md border border-slate-300 bg-white px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            Run quality check
+            {checkingQuality ? "Checking…" : "Run quality check"}
           </button>
         </div>
 

@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { downloadCsv } from "@/lib/csv";
 
 function fmtMoney(n: number): string {
   return `${n < 0 ? "-" : ""}₹${Math.abs(Math.round(n)).toLocaleString("en-IN")}`;
@@ -25,6 +26,19 @@ export default function AnalyticsPage() {
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [opts, setOpts] = useState<OptimizationRun[]>([]);
+  const [isDemoData, setIsDemoData] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ market_data_is_demo?: boolean }>("/health")
+      .then((h) => {
+        if (!cancelled) setIsDemoData(h.market_data_is_demo ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!auth.user) return;
@@ -78,16 +92,16 @@ export default function AnalyticsPage() {
     const months = [...monthly.entries()].sort(([a], [b]) => a.localeCompare(b));
 
     const optCompleted = opts.filter((o) => o.status === "completed");
-    const bestSharpe = Math.max(
-      0,
-      ...optCompleted.map((o) => Number(o.best_metrics?.["sharpe_ratio"] ?? 0)),
-    );
+    const sharpes = optCompleted
+      .map((o) => Number(o.best_metrics?.["sharpe_ratio"] ?? 0))
+      .filter((v) => Number.isFinite(v));
+    const bestSharpe = sharpes.length > 0 ? Math.max(...sharpes) : null;
 
     return { nameById, completed, latest, netPnl, trades, wins, months, optCompleted, bestSharpe };
   }, [runs, strategies, opts]);
 
   if (!auth.user) {
-    return <p className="text-sm text-slate-500">Sign in to view analytics.</p>;
+    return <p className="text-sm text-slate-500">Connecting to the API…</p>;
   }
   if (loading) return <p className="text-sm text-slate-500">Loading analytics…</p>;
   if (error) return <p className="text-sm text-red-600">{error}</p>;
@@ -128,7 +142,7 @@ export default function AnalyticsPage() {
         />
         <MetricCard
           label="Best walk-forward Sharpe"
-          value={data.optCompleted.some((o) => o.best_metrics?.sharpe_ratio) ? data.bestSharpe.toFixed(2) : "—"}
+          value={data.bestSharpe !== null ? data.bestSharpe.toFixed(2) : "—"}
           hint={`${opts.length} optimization runs`}
         />
       </div>
@@ -169,6 +183,31 @@ export default function AnalyticsPage() {
 
       <Card
         title="Strategy performance"
+        actions={
+          data.latest.length > 0 ? (
+            <button
+              onClick={() =>
+                downloadCsv(
+                  "strategy_performance.csv",
+                  ["strategy", "symbol", "timeframe", "return_pct", "net_pnl", "win_rate_pct", "trades", "last_run"],
+                  data.latest.map((run) => {
+                    const s = run.result_summary!.summary;
+                    return [
+                      data.nameById.get(run.strategy_id) ?? run.strategy_id,
+                      run.config?.symbol ?? "", run.config?.timeframe ?? "",
+                      s.return_pct, s.net_pnl,
+                      s.total_trades > 0 ? Number(((s.winning_trades / s.total_trades) * 100).toFixed(1)) : "",
+                      s.total_trades, run.created_at,
+                    ];
+                  }),
+                )
+              }
+              className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+            >
+              Export CSV
+            </button>
+          ) : undefined
+        }
         subtitle={`Latest completed run per strategy (${data.latest.length})`}
       >
         {data.latest.length === 0 ? (
@@ -241,15 +280,24 @@ export default function AnalyticsPage() {
         )}
       </Card>
 
-      <Card title="Optimization activity" subtitle={`${opts.length} total runs`}>
+      <Card
+        title="Optimization activity"
+        subtitle={`${opts.length} total runs`}
+        actions={
+          <a href="/optimization" className="text-xs font-medium text-sky-600 hover:text-sky-700">
+            Open Optimizer →
+          </a>
+        }
+      >
         {opts.length === 0 ? (
           <p className="py-6 text-center text-sm text-slate-400">No optimization runs yet.</p>
         ) : (
           <div className="space-y-2">
             {opts.slice(0, 5).map((o) => (
-              <div
+              <a
                 key={o.id}
-                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-xs"
+                href={`/optimization?run=${o.id}`}
+                className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-xs transition-colors hover:border-sky-300 hover:bg-sky-50"
               >
                 <span className="font-medium text-slate-700">
                   {data.nameById.get(o.strategy_id) ?? o.strategy_id.slice(0, 8)} ·{" "}
@@ -258,15 +306,18 @@ export default function AnalyticsPage() {
                 <Badge tone={o.status === "completed" ? "green" : o.status === "failed" ? "red" : "amber"}>
                   {o.status}
                 </Badge>
-              </div>
+              </a>
             ))}
           </div>
         )}
       </Card>
 
-      <p className="text-xs text-slate-400">
-        Demo market data — aggregates reflect synthetic candles and are for workflow validation only.
-      </p>
+      {isDemoData && (
+        <p className="text-xs text-slate-400">
+          Demo market data — aggregates reflect synthetic candles and are for workflow validation
+          only. Ingest real history via the Data Manager for production-grade numbers.
+        </p>
+      )}
     </div>
   );
 }
