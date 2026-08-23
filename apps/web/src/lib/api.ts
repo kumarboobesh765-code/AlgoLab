@@ -1,5 +1,20 @@
+import { mockApi } from "./mock";
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/**
+ * Mock mode lets the entire UI run without a backend. Default ON unless
+ * NEXT_PUBLIC_MOCK_DATA="0". A localStorage override ("sl_mock" = "1"/"0")
+ * wins and powers the header toggle in AppShell.
+ */
+export function isMockMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const stored = window.localStorage.getItem("sl_mock");
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return process.env.NEXT_PUBLIC_MOCK_DATA !== "0";
+}
 
 const TOKEN_KEY = "strategylab_token";
 
@@ -26,6 +41,16 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (isMockMode()) {
+    const res = await mockApi(path, init);
+    if (res.status >= 400) {
+      const detail =
+        (res.body as { detail?: string })?.detail ?? "Mock request failed";
+      throw new ApiError(res.status, detail);
+    }
+    return res.body as T;
+  }
+
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -56,6 +81,7 @@ export interface Health {
   status: string;
   app: string;
   env: string;
+  auth_enabled?: boolean;
   database: string;
   market_data_provider: string;
   market_data_is_demo: boolean;
