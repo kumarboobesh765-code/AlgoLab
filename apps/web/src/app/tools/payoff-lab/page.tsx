@@ -6,6 +6,7 @@ import {
   type Instrument,
   type MonteCarloBin,
   type MonteCarloResponse,
+  type OptionChain,
   type PayoffResponse,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
@@ -56,6 +57,8 @@ function Histogram({ bins }: { bins: MonteCarloBin[] }) {
 
 export default function PayoffLabPage() {
   const [underlying, setUnderlying] = useState("NIFTY");
+  const [expiries, setExpiries] = useState<string[]>([]);
+  const [expiry, setExpiry] = useState<string>("");
   const [dte, setDte] = useState(7);
   const [lotSizes, setLotSizes] = useState<Record<string, number>>({});
   const [legs, setLegs] = useState<LegState[]>([mkLeg("buy", "CE", 0), mkLeg("buy", "PE", 0)]);
@@ -79,6 +82,21 @@ export default function PayoffLabPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<OptionChain>(`/market/option-chain?underlying=${underlying}`)
+      .then((c) => {
+        if (!cancelled) {
+          setExpiries(c.expiries);
+          setExpiry(c.expiry);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [underlying]);
 
   const step = STRIKE_STEPS[underlying] ?? 50;
   const lotSize = lotSizes[underlying] ?? 25;
@@ -108,6 +126,7 @@ export default function PayoffLabPage() {
 
   const requestBody = () => ({
     underlying,
+    expiry,
     dte_days: dte,
     lot_size: lotSize,
     legs: legs.map((l) => ({
@@ -173,6 +192,18 @@ export default function PayoffLabPage() {
           <span>
             Lot size <strong className="text-slate-700">{lotSize}</strong>
           </span>
+          <label className="flex items-center gap-1">
+            Expiry
+            <select
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+              className="rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-800"
+            >
+              {expiries.map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </label>
           <label className="flex items-center gap-1">
             DTE
             <input

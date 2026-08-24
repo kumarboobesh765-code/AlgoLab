@@ -5,7 +5,7 @@ import { api, type OptionChain } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 
-const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 
 function fmt(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined) return "—";
@@ -14,15 +14,20 @@ function fmt(n: number | null | undefined, digits = 2): string {
 
 export default function OptionChainPage() {
   const [underlying, setUnderlying] = useState("NIFTY");
+  const [expiry, setExpiry] = useState<string | null>(null);
   const [chain, setChain] = useState<OptionChain | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    api<OptionChain>(`/market/option-chain?underlying=${underlying}`)
+    const qs = expiry ? `?underlying=${underlying}&expiry=${expiry}` : `?underlying=${underlying}`;
+    api<OptionChain>(`/market/option-chain${qs}`)
       .then((c) => {
-        if (!cancelled) setChain(c);
+        if (!cancelled) {
+          setChain(c);
+          setExpiry(c.expiry);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load option chain");
@@ -33,12 +38,13 @@ export default function OptionChainPage() {
     return () => {
       cancelled = true;
     };
-  }, [underlying]);
+  }, [underlying, expiry]);
 
   const selectUnderlying = (u: string) => {
     setUnderlying(u);
     setLoading(true);
     setError(null);
+    setExpiry(null);
   };
 
   const { atmStrike, maxCallOi, maxPutOi } = useMemo(() => {
@@ -73,6 +79,21 @@ export default function OptionChainPage() {
           ))}
         </div>
         {chain?.is_demo && <Badge tone="amber">DEMO DATA — synthetic</Badge>}
+        {chain && (
+          <select
+            value={expiry ?? chain.expiry}
+            onChange={(e) => {
+              setExpiry(e.target.value);
+              setLoading(true);
+              setError(null);
+            }}
+            className="rounded-md border border-slate-300 px-2 py-1.5 text-xs text-slate-700"
+          >
+            {chain.expiries.map((e) => (
+              <option key={e} value={e}>{e}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {error && (
@@ -100,11 +121,11 @@ export default function OptionChainPage() {
             <table className="w-full min-w-[860px] text-left text-[12px] tabular-nums">
               <thead>
                 <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
-                  <th colSpan={5} className="pb-1 pr-2 text-center font-semibold text-blue-600">
+                  <th colSpan={8} className="pb-1 pr-2 text-center font-semibold text-blue-600">
                     Calls
                   </th>
                   <th className="pb-1 px-2 text-center font-semibold">Strike</th>
-                  <th colSpan={5} className="pb-1 pl-2 text-center font-semibold text-red-600">
+                  <th colSpan={8} className="pb-1 pl-2 text-center font-semibold text-red-600">
                     Puts
                   </th>
                 </tr>
@@ -113,9 +134,15 @@ export default function OptionChainPage() {
                   <th className="pr-2 text-right font-medium">Vol</th>
                   <th className="pr-2 text-right font-medium">IV %</th>
                   <th className="pr-2 text-right font-medium">Delta</th>
+                  <th className="pr-2 text-right font-medium">Gamma</th>
+                  <th className="pr-2 text-right font-medium">Theta</th>
+                  <th className="pr-2 text-right font-medium">Vega</th>
                   <th className="pr-2 text-right font-medium">LTP</th>
                   <th className="px-2 text-center font-medium">—</th>
                   <th className="pl-2 text-right font-medium">LTP</th>
+                  <th className="pl-2 text-right font-medium">Vega</th>
+                  <th className="pl-2 text-right font-medium">Theta</th>
+                  <th className="pl-2 text-right font-medium">Gamma</th>
                   <th className="pl-2 text-right font-medium">Delta</th>
                   <th className="pl-2 text-right font-medium">IV %</th>
                   <th className="pl-2 text-right font-medium">Vol</th>
@@ -138,12 +165,18 @@ export default function OptionChainPage() {
                       <td className="pr-2 text-right text-slate-500">{fmt(s.call_volume / 1000, 0)}K</td>
                       <td className="pr-2 text-right text-slate-500">{fmt(s.call_iv, 1)}</td>
                       <td className="pr-2 text-right text-slate-500">{fmt(s.call_delta, 2)}</td>
+                      <td className="pr-2 text-right text-slate-500">{fmt(s.call_gamma, 4)}</td>
+                      <td className="pr-2 text-right text-slate-500">{fmt(s.call_theta, 3)}</td>
+                      <td className="pr-2 text-right text-slate-500">{fmt(s.call_vega, 3)}</td>
                       <td className="pr-2 text-right font-semibold text-slate-800">{fmt(s.call_ltp)}</td>
                       <td className={`px-2 text-center font-semibold ${isAtm ? "text-blue-700" : "text-slate-700"}`}>
                         {s.strike.toLocaleString("en-IN")}
                         {isAtm && <span className="ml-1 rounded bg-blue-600 px-1 py-px text-[9px] text-white">ATM</span>}
                       </td>
                       <td className="pl-2 text-right font-semibold text-slate-800">{fmt(s.put_ltp)}</td>
+                      <td className="pl-2 text-right text-slate-500">{fmt(s.put_vega, 3)}</td>
+                      <td className="pl-2 text-right text-slate-500">{fmt(s.put_theta, 3)}</td>
+                      <td className="pl-2 text-right text-slate-500">{fmt(s.put_gamma, 4)}</td>
                       <td className="pl-2 text-right text-slate-500">{fmt(s.put_delta, 2)}</td>
                       <td className="pl-2 text-right text-slate-500">{fmt(s.put_iv, 1)}</td>
                       <td className="pl-2 text-right text-slate-500">{fmt(s.put_volume / 1000, 0)}K</td>

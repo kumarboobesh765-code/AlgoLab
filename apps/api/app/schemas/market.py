@@ -52,6 +52,12 @@ class OptionChainRow(BaseModel):
     put_volume: float
     call_delta: float
     put_delta: float
+    call_gamma: float = 0.0
+    call_theta: float = 0.0
+    call_vega: float = 0.0
+    put_gamma: float = 0.0
+    put_theta: float = 0.0
+    put_vega: float = 0.0
 
 
 class OptionChainOut(BaseModel):
@@ -61,3 +67,6 @@ class OptionChainOut(BaseModel):
     strikes: list[OptionChainRow]
     provider: str
     is_demo: bool
+    strike_step: int = 50
+    lot_size: int = 50
+    expiries: list[str] = []

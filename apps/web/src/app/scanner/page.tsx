@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import type { Instrument, PreviewResponse } from "@/lib/api";
+import type { Instrument, OptionChain, PreviewResponse } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { emptyDefinition } from "@/lib/builders";
 import type { StrategyDefinitionV1 } from "@/lib/builders";
@@ -140,6 +140,28 @@ const PRESETS: Preset[] = [
       return d;
     },
   },
+  {
+    id: "top_fo_oi",
+    label: "Top F&O by OI",
+    tail: { id: "oi", output: "total" },
+    build: (tf, sym) => {
+      const d = emptyDefinition();
+      d.timeframe = tf;
+      d.instrument = { ...d.instrument, symbol: sym };
+      d.indicators = [{ id: "oi", type: "RSI", params: { length: 14 } }];
+      d.entry = {
+        logic: "ALL",
+        conditions: [
+          {
+            left: { kind: "indicator", ref: "oi.rsi" },
+            op: "GT",
+            right: { kind: "constant", value: 0 },
+          },
+        ],
+      };
+      return d;
+    },
+  },
 ];
 
 export default function ScannerPage() {
@@ -169,7 +191,11 @@ export default function ScannerPage() {
   }, [auth.user]);
 
   const symbols = useMemo(() => {
-    const idx = instruments.filter((i) => i.segment === "index");
+    const idx = instruments.filter((i) => {
+      if (["index", "options", "futures", "fo", "NSE_FO", "BSE_FO"].includes(i.segment)) return true;
+      if (["OPTIDX", "OPTSTK", "FUTIDX", "FUTSTK"].includes(i.instrument_type ?? "")) return true;
+      return false;
+    });
     return [...new Set(idx.map((i) => i.symbol))].sort();
   }, [instruments]);
 
@@ -224,7 +250,23 @@ export default function ScannerPage() {
       await Promise.all(
         Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker()),
       );
-      setResults(rows.filter(Boolean));
+      let finalRows = rows.filter((r): r is ScanRow => r !== undefined);
+      if (presetId === "top_fo_oi") {
+        const oiMap = new Map<string, number>();
+        await Promise.all(
+          finalRows.map(async (row) => {
+            try {
+              const chain = await api<OptionChain>(`/market/option-chain?underlying=${row.symbol}`);
+              const totalOi = chain.strikes.reduce((sum, s) => sum + s.call_oi + s.put_oi, 0);
+              oiMap.set(row.symbol, totalOi);
+            } catch {
+              oiMap.set(row.symbol, 0);
+            }
+          })
+        );
+        finalRows = finalRows.sort((a, b) => (oiMap.get(b.symbol) ?? 0) - (oiMap.get(a.symbol) ?? 0));
+      }
+      setResults(finalRows);
       setScanning(false);
     })();
   }

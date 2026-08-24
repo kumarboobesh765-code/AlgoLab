@@ -130,6 +130,7 @@ export interface Instrument {
   strike: number | null;
   option_type: string | null;
   lot_size: number;
+  strike_step: number | null;
   tick_size: number;
   status: string;
 }
@@ -159,6 +160,12 @@ export interface OptionChainRow {
   put_volume: number;
   call_delta: number;
   put_delta: number;
+  call_gamma: number;
+  call_theta: number;
+  call_vega: number;
+  put_gamma: number;
+  put_theta: number;
+  put_vega: number;
 }
 
 export interface OptionChain {
@@ -168,6 +175,9 @@ export interface OptionChain {
   strikes: OptionChainRow[];
   provider: string;
   is_demo: boolean;
+  strike_step: number;
+  lot_size: number;
+  expiries: string[];
 }
 
 // ---- data manager ----
@@ -274,6 +284,7 @@ export interface BacktestSummary {
   max_drawdown_pct: number;
   sharpe_ratio: number;
   total_costs: number;
+  cost_breakdown?: Record<string, number>;
   timeframe: string;
 }
 
@@ -559,6 +570,15 @@ export interface StrategyTemplate {
 }
 
 // ------------------------------------------------------------- Options Lab
+
+export interface OptionLeg {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike?: number | null;
+  strike_offset?: number | null;
+  lots?: number;
+  expiry?: string | null;
+}
 
 export interface OptionLegInput {
   action: "buy" | "sell";

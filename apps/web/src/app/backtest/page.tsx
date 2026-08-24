@@ -295,6 +295,15 @@ export default function BacktestPage() {
             <MetricCard label="Avg win" value={fmtMoney(s.avg_win)} tone="green" />
             <MetricCard label="Avg loss" value={fmtMoney(s.avg_loss)} tone="red" />
             <MetricCard label="Costs" value={fmtMoney(s.total_costs)} />
+            {s.cost_breakdown && (
+              <Card title="Cost breakdown (INR)" subtitle="Estimated transaction charges">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {Object.entries(s.cost_breakdown).map(([k, v]) => (
+                    <MetricCard key={k} label={k.toUpperCase()} value={fmtMoney(v)} />
+                  ))}
+                </div>
+              </Card>
+            )}
             <MetricCard label="Largest loss" value={fmtMoney(s.largest_loss)} tone="red" />
           </div>
 

@@ -68,6 +68,8 @@ class PayoffResponse(BaseModel):
     curve: list[PayoffPoint]
     metrics: PayoffMetricsOut
     net_greeks: NetGreeks
+    strike_step: int | None = None
+    expiries: list[str] | None = None
 
 
 class MonteCarloRequest(PayoffRequest):

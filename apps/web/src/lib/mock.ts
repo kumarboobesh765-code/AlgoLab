@@ -93,6 +93,57 @@ function addDays(base: Date, days: number): Date {
 }
 
 // ---------------------------------------------------------------------------
+// Indian F&O reference data
+// ---------------------------------------------------------------------------
+const FNO_REF: Record<string, { lot_size: number; strike_step: number; spot: number }> = {
+  NIFTY:      { lot_size: 75,  strike_step: 50,  spot: 23860 },
+  BANKNIFTY:  { lot_size: 30,  strike_step: 100, spot: 52150 },
+  FINNIFTY:   { lot_size: 40,  strike_step: 50,  spot: 23860 },
+  MIDCPNIFTY: { lot_size: 75,  strike_step: 75,  spot: 12200 },
+  SENSEX:     { lot_size: 10,  strike_step: 100, spot: 79200 },
+  BANKEX:     { lot_size: 15,  strike_step: 100, spot: 56200 },
+};
+
+function nextWeeklyExpiries(count = 4): string[] {
+  const out: string[] = [];
+  const d = new Date(NOW);
+  d.setHours(0, 0, 0, 0);
+  while (d.getDay() !== 4) d.setDate(d.getDate() + 1);
+  for (let i = 0; i < count; i++) {
+    out.push(isoDate(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return out;
+}
+
+function nextMonthlyExpiries(count = 3): string[] {
+  const out: string[] = [];
+  const d = new Date(NOW);
+  d.setHours(0, 0, 0, 0);
+  while (d.getDay() !== 4) d.setDate(d.getDate() + 1);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const lastThursday = new Date(last);
+  lastThursday.setDate(lastThursday.getDate() - ((lastThursday.getDay() + 3) % 7));
+  const base = new Date(Math.max(d.getTime(), lastThursday.getTime()));
+  for (let i = 0; i < count; i++) {
+    const e = new Date(base);
+    e.setMonth(e.getMonth() + i);
+    const m = new Date(e.getFullYear(), e.getMonth() + 1, 0);
+    const th = new Date(m);
+    th.setDate(th.getDate() - ((th.getDay() + 3) % 7));
+    out.push(isoDate(th));
+  }
+  return out;
+}
+
+function allExpiries(): string[] {
+  const weekly = nextWeeklyExpiries(4);
+  const monthly = nextMonthlyExpiries(3);
+  const set = new Set<string>(weekly.concat(monthly));
+  return Array.from(set).sort();
+}
+
+// ---------------------------------------------------------------------------
 // mock strategies
 // ---------------------------------------------------------------------------
 const STRAT_DEFS: Record<string, Record<string, unknown>> = {
@@ -295,7 +346,6 @@ function computeSummary(curve: { time: string; equity: number }[], trades: Backt
   const grossLoss = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
   const winRate = trades.length ? round((wins.length / trades.length) * 100, 2) : 0;
   const profitFactor = grossLoss ? round(grossWin / grossLoss, 2) : 0;
-  // drawdown
   let peak = -Infinity;
   let maxDD = 0;
   for (const p of curve) {
@@ -303,7 +353,6 @@ function computeSummary(curve: { time: string; equity: number }[], trades: Backt
     const dd = (peak - p.equity) / peak;
     if (dd > maxDD) maxDD = dd;
   }
-  // sharpe from bar returns
   const rets: number[] = [];
   for (let i = 1; i < curve.length; i++) {
     rets.push((curve[i].equity - curve[i - 1].equity) / curve[i - 1].equity);
@@ -312,6 +361,13 @@ function computeSummary(curve: { time: string; equity: number }[], trades: Backt
   const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1);
   const std = Math.sqrt(variance) || 1e-9;
   const sharpe = round((mean / std) * Math.sqrt(252), 2);
+  const totalCosts = round((costs / 100) * capital, 2);
+  const stt = round(totalCosts * 0.35, 2);
+  const exchange = round(totalCosts * 0.18, 2);
+  const sebi = round(totalCosts * 0.02, 2);
+  const stamp = round(totalCosts * 0.12, 2);
+  const brokerage = round(totalCosts * 0.18, 2);
+  const gst = round(totalCosts * 0.15, 2);
   return {
     initial_capital: capital,
     final_equity: round(finalEquity, 2),
@@ -328,7 +384,8 @@ function computeSummary(curve: { time: string; equity: number }[], trades: Backt
     largest_loss: losses.length ? round(Math.min(...losses.map((t) => t.pnl)), 2) : 0,
     max_drawdown_pct: round(maxDD * 100, 2),
     sharpe_ratio: sharpe,
-    total_costs: round((costs / 100) * capital, 2),
+    total_costs: totalCosts,
+    cost_breakdown: { stt, exchange, sebi, stamp, brokerage, gst, total: totalCosts },
     timeframe: "5m",
   };
 }
@@ -374,35 +431,42 @@ function genCandles(seed: string, count: number, symbol: string): ReplayCandle[]
 // instruments + option chain
 // ---------------------------------------------------------------------------
 function mockInstruments(): Instrument[] {
-  const syms = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"];
-  return syms.map((s, i) => ({
-    id: `inst_${i}`,
-    security_id: `SEC${1000 + i}`,
-    exchange: "NSE",
-    segment: "index",
-    exchange_segment: "NSE_FO",
-    symbol: s,
-    name: s,
-    underlying: s,
-    instrument_type: "INDEX",
-    expiry_code: 1,
-    expiry: daysAgo(-30),
-    strike: null,
-    option_type: null,
-    lot_size: s === "BANKNIFTY" ? 25 : 50,
-    tick_size: 0.05,
-    status: "active",
-  }));
+  const syms = Object.keys(FNO_REF);
+  return syms.map((s, i) => {
+    const ref = FNO_REF[s];
+    return {
+      id: `inst_${i}`,
+      security_id: `SEC${1000 + i}`,
+      exchange: "NSE",
+      segment: "index",
+      exchange_segment: "NSE_FO",
+      symbol: s,
+      name: s,
+      underlying: s,
+      instrument_type: "INDEX",
+      expiry_code: 1,
+      expiry: daysAgo(-30),
+      strike: null,
+      option_type: null,
+      lot_size: ref.lot_size,
+      strike_step: ref.strike_step,
+      tick_size: 0.05,
+      status: "active",
+    };
+  });
 }
 
-function mockOptionChain(underlying: string): OptionChain {
-  const spot = underlying.includes("BANK") ? 52150 : 23860;
-  const atm = Math.round(spot / 50) * 50;
+function mockOptionChain(underlying: string, expiry?: string): OptionChain {
+  const ref = FNO_REF[underlying] ?? FNO_REF.NIFTY;
+  const spot = ref.spot;
+  const step = ref.strike_step;
+  const lotSize = ref.lot_size;
+  const atm = Math.round(spot / step) * step;
   const rows: OptionChainRow[] = [];
   for (let i = -10; i <= 10; i++) {
-    const strike = atm + i * 50;
+    const strike = atm + i * step;
     const r = rnd(underlying + strike);
-    const dist = Math.abs(strike - atm) / 50;
+    const dist = Math.abs(strike - atm) / step;
     rows.push({
       strike,
       call_ltp: round(Math.max(0.5, 120 - dist * 9 + r() * 10), 2),
@@ -415,9 +479,17 @@ function mockOptionChain(underlying: string): OptionChain {
       put_volume: Math.floor(50000 + r() * 60000),
       call_delta: round(strike < atm ? 0.3 + r() * 0.2 : 0.6 + r() * 0.3, 3),
       put_delta: round(strike < atm ? -0.6 - r() * 0.3 : -0.3 - r() * 0.2, 3),
+      call_gamma: round(0.0001 + r() * 0.0015, 4),
+      call_theta: round(-1.5 - r() * 4, 3),
+      call_vega: round(1 + r() * 6, 3),
+      put_gamma: round(0.0001 + r() * 0.0015, 4),
+      put_theta: round(-1.5 - r() * 4, 3),
+      put_vega: round(1 + r() * 6, 3),
     });
   }
-  return { underlying, spot, expiry: daysAgo(-30), strikes: rows, provider: "demo", is_demo: true };
+  const exps = allExpiries();
+  const chosenExpiry = expiry && exps.includes(expiry) ? expiry : exps[0];
+  return { underlying, spot, expiry: chosenExpiry, strikes: rows, provider: "demo", is_demo: true, strike_step: step, lot_size: lotSize, expiries: exps };
 }
 
 // ---------------------------------------------------------------------------
@@ -640,6 +712,14 @@ function mockAiDraft(prompt: string): AiDraftResponse {
 // templates
 // ---------------------------------------------------------------------------
 function mockTemplates(): { name: string; description: string; tags: string[]; definition: Record<string, unknown> }[] {
+  const fnoTemplates = [
+    { name: "NIFTY Bull Call Spread", description: "Bullish spread on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "buy", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "sell", option_type: "CE", strike_offset: 1, lots: 75 }], version: 1 } },
+    { name: "NIFTY Long Straddle", description: "Long straddle on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "buy", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "buy", option_type: "PE", strike_offset: 0, lots: 75 }], version: 1 } },
+    { name: "NIFTY Iron Condor", description: "Iron condor on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "sell", option_type: "CE", strike_offset: 1, lots: 75 }, { action: "sell", option_type: "PE", strike_offset: -1, lots: 75 }, { action: "buy", option_type: "CE", strike_offset: 2, lots: 75 }, { action: "buy", option_type: "PE", strike_offset: -2, lots: 75 }], version: 1 } },
+    { name: "BANKNIFTY Short Straddle", description: "Short straddle on BANKNIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "BANKNIFTY", legs: [{ action: "sell", option_type: "CE", strike_offset: 0, lots: 30 }, { action: "sell", option_type: "PE", strike_offset: 0, lots: 30 }], version: 1 } },
+    { name: "BANKNIFTY Bear Put Spread", description: "Bear put spread on BANKNIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "BANKNIFTY", legs: [{ action: "buy", option_type: "PE", strike_offset: 0, lots: 30 }, { action: "sell", option_type: "PE", strike_offset: -1, lots: 30 }], version: 1 } },
+    { name: "NIFTY Iron Butterfly", description: "Iron butterfly on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "sell", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "sell", option_type: "PE", strike_offset: 0, lots: 75 }, { action: "buy", option_type: "CE", strike_offset: 1, lots: 75 }, { action: "buy", option_type: "PE", strike_offset: -1, lots: 75 }], version: 1 } },
+  ];
   return [
     { name: "EMA Crossover", description: "Dual EMA trend crossover.", tags: ["trend"], definition: STRAT_DEFS.ema },
     { name: "RSI Reversion", description: "Oversold bounce.", tags: ["mean-reversion"], definition: STRAT_DEFS.rsi },
@@ -647,6 +727,7 @@ function mockTemplates(): { name: string; description: string; tags: string[]; d
     { name: "Supertrend", description: "ATR-based trend follow.", tags: ["trend"], definition: STRAT_DEFS.supertrend },
     { name: "Bollinger", description: "Band mean reversion.", tags: ["volatility"], definition: STRAT_DEFS.bollinger },
     { name: "VWAP", description: "Intraday VWAP pullback.", tags: ["intraday"], definition: STRAT_DEFS.vwap },
+    ...fnoTemplates,
   ];
 }
 
@@ -1014,7 +1095,7 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
     const res: QualityReport = { symbol: decodeURIComponent(m[1]), interval: params.get("interval") ?? "5m", candles_checked: 1180, first: daysAgo(30), last: daysAgo(1), issues: [], coverage: { expected_bars: 1200, actual_unique_bars: 1180, missing_bars: 20, missing_pct: 1.7, status: "warning" } };
     return ok(res);
   }
-  if (pathOnly === "/market/option-chain" && method === "GET") return ok(mockOptionChain(params.get("underlying") ?? "NIFTY"));
+  if (pathOnly === "/market/option-chain" && method === "GET") return ok(mockOptionChain(params.get("underlying") ?? "NIFTY", params.get("expiry") ?? undefined));
   if (pathOnly === "/market/instruments" && method === "GET") return ok(mockInstruments());
 
   // options lab

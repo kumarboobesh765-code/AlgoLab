@@ -58,6 +58,16 @@ export interface StrategyDefinitionV1 {
     quantity: number;
     capital_pct: number | null;
   };
+  legs?: OptionLeg[];
+}
+
+export interface OptionLeg {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike?: number | null;
+  strike_offset?: number | null;
+  lots?: number;
+  expiry?: string | null;
 }
 
 export const OPERATORS = [

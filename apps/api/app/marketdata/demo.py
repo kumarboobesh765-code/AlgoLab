@@ -17,14 +17,47 @@ IST = timezone(timedelta(hours=5, minutes=30))
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
 
-# symbol -> (name, base_price, lot_size, strike_step)
+# symbol -> (name, base_price, lot_size, strike_step)  [Indian F&O standard]
 DEMO_INDICES: dict[str, tuple[str, float, int, int]] = {
-    "NIFTY": ("Nifty 50", 24800.0, 75, 50),
-    "BANKNIFTY": ("Nifty Bank", 51200.0, 35, 100),
-    "FINNIFTY": ("Nifty Financial Services", 23100.0, 65, 50),
-    "MIDCPNIFTY": ("Nifty Midcap Select", 12350.0, 120, 25),
-    "SENSEX": ("BSE Sensex", 81400.0, 20, 100),
+    "NIFTY": ("Nifty 50", 23860.0, 75, 50),
+    "BANKNIFTY": ("Nifty Bank", 52150.0, 30, 100),
+    "FINNIFTY": ("Nifty Financial Services", 23860.0, 40, 50),
+    "MIDCPNIFTY": ("Nifty Midcap Select", 12200.0, 75, 75),
+    "SENSEX": ("BSE Sensex", 79200.0, 10, 100),
+    "BANKEX": ("BSE Bankex", 56200.0, 15, 100),
 }
+
+
+def _next_thursdays(n: int) -> list[datetime]:
+    """Next `n` weekly expiry Thursdays (exclusive of today)."""
+    today = datetime.now(IST).date()
+    out: list[datetime] = []
+    d = today + timedelta(days=1)
+    while len(out) < n:
+        if d.weekday() == 3:  # Thursday
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def _month_end_thursdays(n: int) -> list[datetime]:
+    """Next `n` monthly expiry Thursdays (last Thursday of each month)."""
+    today = datetime.now(IST).date()
+    out: list[datetime] = []
+    y, m = today.year, today.month
+    while len(out) < n:
+        if m == 12:
+            nm, ny = 1, y + 1
+        else:
+            nm, ny = m + 1, y
+        last = datetime(ny, nm, 1).date() - timedelta(days=1)
+        d = last
+        while d.weekday() != 3:
+            d -= timedelta(days=1)
+        if d > today:
+            out.append(d)
+        y, m = ny, nm
+    return out
 
 INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 375}
 
@@ -143,7 +176,7 @@ class DemoProvider(MarketDataProvider):
         meta = DEMO_INDICES.get(symbol)
         if meta is None:
             raise ValueError(f"Unknown demo underlying '{underlying}'.")
-        _, base_price, _, strike_step = meta
+        _, base_price, lot_size, strike_step = meta
 
         spot_rng = _Rng(_seed("spot", symbol, datetime.now(IST).date().isoformat()))
         spot = round(base_price * (1 + spot_rng.normal(0, 0.01)), 2)
@@ -151,11 +184,12 @@ class DemoProvider(MarketDataProvider):
         atm = round(spot / strike_step) * strike_step
         strikes = [atm + i * strike_step for i in range(-10, 11)]
 
-        # nearest Thursday as weekly expiry (demo approximation)
+        # Weekly (next 4 Thursdays) + monthly (next 3 month-end Thursdays).
+        expiries = [d.isoformat() for d in _next_thursdays(4) + _month_end_thursdays(3)]
+        chosen = expiry if expiry in expiries else expiries[0]
+        chosen_date = datetime.fromisoformat(chosen).date()
         today = datetime.now(IST).date()
-        days_ahead = (3 - today.weekday()) % 7
-        expiry_date = today + timedelta(days=days_ahead)
-        dte = max((expiry_date - today).days, 0.5)
+        dte = max((chosen_date - today).days, 0.5)
 
         rows = []
         for k in strikes:
@@ -164,6 +198,7 @@ class DemoProvider(MarketDataProvider):
             call_ltp = self._theo_price(spot, k, dte / 365.0, call_iv, "call")
             put_ltp = self._theo_price(spot, k, dte / 365.0, put_iv, "put")
             oi_falloff = math.exp(-((k - atm) ** 2) / (2 * (4.0 * strike_step) ** 2))
+            years = dte / 365.0
             rows.append(
                 {
                     "strike": k,
@@ -175,18 +210,27 @@ class DemoProvider(MarketDataProvider):
                     "put_oi": round(2_600_000 * oi_falloff * (1.05 if k <= atm else 0.95)),
                     "call_volume": round(900_000 * oi_falloff),
                     "put_volume": round(850_000 * oi_falloff),
-                    "call_delta": round(self._bs_delta(spot, k, dte / 365.0, call_iv, "call"), 4),
-                    "put_delta": round(self._bs_delta(spot, k, dte / 365.0, put_iv, "put"), 4),
+                    "call_delta": round(self._bs_delta(spot, k, years, call_iv, "call"), 4),
+                    "put_delta": round(self._bs_delta(spot, k, years, put_iv, "put"), 4),
+                    "call_gamma": round(self._bs_gamma(spot, k, years, call_iv), 6),
+                    "call_theta": round(self._bs_theta(spot, k, years, call_iv, "call"), 4),
+                    "call_vega": round(self._bs_vega(spot, k, years, call_iv), 4),
+                    "put_gamma": round(self._bs_gamma(spot, k, years, put_iv), 6),
+                    "put_theta": round(self._bs_theta(spot, k, years, put_iv, "put"), 4),
+                    "put_vega": round(self._bs_vega(spot, k, years, put_iv), 4),
                 }
             )
 
         return {
             "underlying": symbol,
             "spot": spot,
-            "expiry": expiry_date.isoformat(),
+            "expiry": chosen,
             "strikes": rows,
             "provider": self.name,
             "is_demo": self.is_demo,
+            "strike_step": strike_step,
+            "lot_size": lot_size,
+            "expiries": expiries,
         }
 
     # ------------------------------------------------------------------
@@ -259,3 +303,33 @@ class DemoProvider(MarketDataProvider):
         if kind == "call":
             return spot * nd1 - strike * math.exp(-r * years) * nd2
         return strike * math.exp(-r * years) * (1 - nd2) - spot * (1 - nd1)
+
+    @staticmethod
+    def _bs_gamma(spot: float, strike: float, years: float, iv: float) -> float:
+        if years <= 0 or iv <= 0:
+            return 0.0
+        d1 = DemoProvider._bs_d1(spot, strike, years, iv)
+        return math.exp(-(d1**2) / 2) / (spot * iv * math.sqrt(years) * math.sqrt(2 * math.pi))
+
+    @staticmethod
+    def _bs_vega(spot: float, strike: float, years: float, iv: float) -> float:
+        if years <= 0 or iv <= 0:
+            return 0.0
+        d1 = DemoProvider._bs_d1(spot, strike, years, iv)
+        # per 1.00 vol; convert to per 1 vol point (0.01)
+        return spot * math.exp(-(d1**2) / 2) * math.sqrt(years) / math.sqrt(2 * math.pi) / 100.0
+
+    @staticmethod
+    def _bs_theta(spot: float, strike: float, years: float, iv: float, kind: str) -> float:
+        if years <= 0 or iv <= 0:
+            return 0.0
+        d1 = DemoProvider._bs_d1(spot, strike, years, iv)
+        d2 = d1 - iv * math.sqrt(years)
+        r = 0.065
+        nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+        nd2 = 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
+        if kind == "call":
+            theta = -(spot * iv * math.exp(-(d1**2) / 2)) / (2 * math.sqrt(years) * math.sqrt(2 * math.pi)) - r * strike * math.exp(-r * years) * nd2
+        else:
+            theta = -(spot * iv * math.exp(-(d1**2) / 2)) / (2 * math.sqrt(years) * math.sqrt(2 * math.pi)) + r * strike * math.exp(-r * years) * (1 - nd2)
+        return theta / 365.0  # per calendar day

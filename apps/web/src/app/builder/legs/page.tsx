@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { PayoffChart, inr, fmt } from "@/components/charts/PayoffChart";
 
-const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
+const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"];
 const STRIKE_STEPS: Record<string, number> = {
   NIFTY: 50,
   BANKNIFTY: 100,
@@ -99,6 +99,7 @@ export default function LegBuilderPage() {
   const [underlying, setUnderlying] = useState("NIFTY");
   const [chain, setChain] = useState<OptionChain | null>(null);
   const [chainError, setChainError] = useState<string | null>(null);
+  const [expiry, setExpiry] = useState<string>("");
   const [legs, setLegs] = useState<Leg[]>([mkLeg("buy", "CE", 0), mkLeg("sell", "CE", 1)]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -132,7 +133,10 @@ export default function LegBuilderPage() {
     setChainError(null);
     api<OptionChain>(`/market/option-chain?underlying=${underlying}`)
       .then((c) => {
-        if (!cancelled) setChain(c);
+        if (!cancelled) {
+          setChain(c);
+          setExpiry(c.expiry);
+        }
       })
       .catch(() => {
         if (!cancelled) setChainError("Could not load option chain (mock mode needs the API or mock layer).");
@@ -211,6 +215,7 @@ export default function LegBuilderPage() {
     version: 1,
     builder: "legs",
     underlying,
+    expiry: chain?.expiry ?? null,
     legs: resolved.map((l) => ({ action: l.action, optType: l.optType, offset: l.offset, strike: l.strike, lots: l.lots, premium: l.premium })),
     exit: { target_pct: target ? Number(target) : null, stop_pct: stop ? Number(stop) : null },
   });
@@ -288,6 +293,18 @@ export default function LegBuilderPage() {
             >
               {UNDERLYINGS.map((u) => (
                 <option key={u}>{u}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Expiry
+            <select
+              value={expiry}
+              onChange={(e) => setExpiry(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
+            >
+              {chain?.expiries.map((e) => (
+                <option key={e} value={e}>{e}</option>
               ))}
             </select>
           </label>
