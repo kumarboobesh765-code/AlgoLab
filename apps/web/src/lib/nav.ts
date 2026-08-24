@@ -31,6 +31,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Technical Builder", href: "/builder/technical" },
       { label: "Strategy Flow", href: "/builder/flow" },
       { label: "AI Builder", href: "/builder/ai" },
+      { label: "Leg Builder", href: "/builder/legs" },
       { label: "Templates", href: "/builder/templates" },
     ],
   },
