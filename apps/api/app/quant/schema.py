@@ -80,14 +80,29 @@ class PositionConfig(BaseModel):
     capital_pct: float | None = Field(default=None, gt=0, le=100)
 
 
+class OptionLeg(BaseModel):
+    """A single F&O option leg (used by the Leg Builder / options strategies)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["buy", "sell"] = "buy"
+    option_type: Literal["CE", "PE"] = "CE"
+    strike: float | None = None
+    strike_offset: int | None = None
+    lots: int = Field(default=1, ge=1)
+    expiry: str | None = None
+
+
 class StrategyDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: Literal[1]
     timeframe: str
     instrument: InstrumentRef
+    builder: str | None = None  # e.g. "legs" for options-leg strategies
     variables: list[Variable] = Field(default_factory=list, max_length=50)
     indicators: list[IndicatorDef] = Field(default_factory=list, max_length=50)
+    legs: list[OptionLeg] = Field(default_factory=list, max_length=8)
     entry: ConditionGroup
     exit: ConditionGroup | None = None
     risk: RiskConfig | None = None

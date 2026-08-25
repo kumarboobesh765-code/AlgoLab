@@ -1,10 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { api, type Strategy } from "@/lib/api";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  api,
+  type Strategy,
+  type StrategyExportPayload,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { STRATEGY_EDIT_KEY, TEMPLATE_HANDOFF_KEY, TEMPLATE_HANDOFF_NAME } from "@/lib/builders";
 import { Card } from "@/components/ui/Card";
 import { StatusBadge } from "@/components/ui/Badge";
 
@@ -38,12 +43,16 @@ export default function StrategiesPage() {
 
 function StrategiesContent() {
   const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const createdName = searchParams.get("created");
   const [strategies, setStrategies] = useState<Strategy[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [showPicker, setShowPicker] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -81,17 +90,100 @@ function StrategiesContent() {
     }
   }
 
+  function handleViewJson(s: Strategy) {
+    if (!s.definition) return;
+    try {
+      sessionStorage.setItem(TEMPLATE_HANDOFF_KEY, JSON.stringify(s.definition, null, 2));
+      sessionStorage.setItem(TEMPLATE_HANDOFF_NAME, s.name);
+      sessionStorage.removeItem(STRATEGY_EDIT_KEY);
+      router.push("/builder/technical");
+    } catch {
+      setError("Could not open the definition in the Technical Builder.");
+    }
+  }
+
+  function handleEdit(s: Strategy) {
+    if (!s.definition) return;
+    try {
+      sessionStorage.setItem(TEMPLATE_HANDOFF_KEY, JSON.stringify(s.definition, null, 2));
+      sessionStorage.setItem(TEMPLATE_HANDOFF_NAME, s.name);
+      sessionStorage.setItem(STRATEGY_EDIT_KEY, s.id);
+      router.push("/builder/technical");
+    } catch {
+      setError("Could not open the strategy in the Technical Builder.");
+    }
+  }
+
+  async function handleClone(id: string) {
+    try {
+      const copy = await api<Strategy>(`/strategies/${id}/clone`, { method: "POST" });
+      setNotice(`Created “${copy.name}”.`);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Clone failed");
+    }
+  }
+
+  async function handleExport(id: string, name: string) {
+    try {
+      const data = await api<StrategyExportPayload>(`/strategies/${id}/export`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name.replace(/[^a-z0-9_-]+/gi, "_").toLowerCase() || "strategy"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setNotice(`Exported “${data.name}”.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    }
+  }
+
+  async function handleImportFile(file: File) {
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text) as StrategyExportPayload;
+      if (!payload.name || typeof payload.definition !== "object") {
+        throw new Error("File must contain { name, definition } — export a strategy first.");
+      }
+      await api("/strategies/import", {
+        method: "POST",
+        body: JSON.stringify({
+          name: payload.name,
+          description: payload.description,
+          exchange: payload.exchange,
+          underlying: payload.underlying,
+          instrument: payload.instrument,
+          strategy_type: payload.strategy_type,
+          tags: payload.tags,
+          definition: payload.definition,
+        }),
+      });
+      setNotice(`Imported “${payload.name}” as a new strategy.`);
+      await refresh();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Import failed — invalid JSON file.",
+      );
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
   if (!authLoading && !user) {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to manage your strategies.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -113,12 +205,22 @@ function StrategiesContent() {
           className="w-64 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
         />
         <div className="flex items-center gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportFile(f);
+            }}
+          />
           <button
-            disabled
-            title="Import ships in Phase 9"
-            className="cursor-not-allowed rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-400"
+            onClick={() => fileRef.current?.click()}
+            disabled={importing}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:border-blue-300 hover:text-blue-700 disabled:opacity-50"
           >
-            Import
+            {importing ? "Importing…" : "Import"}
           </button>
           <button
             onClick={() => setShowPicker(!showPicker)}
@@ -132,6 +234,12 @@ function StrategiesContent() {
       {createdName && (
         <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700 ring-1 ring-inset ring-emerald-200">
           ✓ “{createdName}” saved as v1. Run it through history from the Backtest page.
+        </p>
+      )}
+
+      {notice && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700 ring-1 ring-inset ring-emerald-200">
+          {notice}
         </p>
       )}
 
@@ -242,6 +350,59 @@ function StrategiesContent() {
                             Backtest
                           </button>
                         )}
+                        <Link
+                          href={`/reports?strategy=${s.id}`}
+                          className="rounded border border-violet-200 px-1.5 py-0.5 text-[11px] text-violet-600 hover:bg-violet-50"
+                        >
+                          Report
+                        </Link>
+                        {s.definition ? (
+                          <button
+                            onClick={() => handleEdit(s)}
+                            title="Edit this strategy in the Technical Builder (saves back to the same strategy)"
+                            className="rounded border border-indigo-200 px-1.5 py-0.5 text-[11px] text-indigo-600 hover:bg-indigo-50"
+                          >
+                            Edit
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            title="Add a definition first"
+                            className="cursor-not-allowed rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-400"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        {s.definition ? (
+                          <button
+                            onClick={() => handleViewJson(s)}
+                            title="Open this definition in the Technical Builder"
+                            className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                          >
+                            View JSON
+                          </button>
+                        ) : (
+                          <button
+                            disabled
+                            title="Add a definition first"
+                            className="cursor-not-allowed rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-400"
+                          >
+                            View JSON
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleClone(s.id)}
+                          title="Duplicate this strategy"
+                          className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                        >
+                          Clone
+                        </button>
+                        <button
+                          onClick={() => handleExport(s.id, s.name)}
+                          className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+                        >
+                          Export
+                        </button>
                         <button
                           onClick={() => handleDelete(s.id)}
                           className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-50"

@@ -10,10 +10,12 @@ const inputCls =
 export default function IndicatorsEditor({
   definition,
   catalog,
+  catalogError,
   onChange,
 }: {
   definition: IndicatorDef[];
   catalog: QuantCatalog | null;
+  catalogError?: string | null;
   onChange: (next: IndicatorDef[]) => void;
 }) {
   const add = (entry: IndicatorCatalogEntry) => {
@@ -57,13 +59,18 @@ export default function IndicatorsEditor({
           className={`${inputCls} max-w-56`}
           disabled={!catalog}
         >
-          <option value="">{catalog ? "+ Add indicator…" : "Loading catalog…"}</option>
+          <option value="">
+            {catalog ? "+ Add indicator…" : catalogError ? "Catalog unavailable" : "Loading catalog…"}
+          </option>
           {catalog?.indicators.map((entry) => (
             <option key={entry.type} value={entry.type}>
               {entry.type} — {entry.description}
             </option>
           ))}
         </select>
+        {catalogError && (
+          <span className="text-[11px] text-red-500">{catalogError}</span>
+        )}
       </div>
 
       {definition.length === 0 ? (

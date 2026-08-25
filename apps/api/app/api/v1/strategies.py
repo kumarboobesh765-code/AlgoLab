@@ -13,7 +13,6 @@ from app.schemas.strategy import (
     StrategyVersionOut,
     VersionCreate,
 )
-
 from app.templates import get_templates
 
 router = APIRouter(tags=["strategies"])
@@ -77,7 +76,11 @@ async def get_strategy(strategy_id: uuid.UUID, db: DbSession, current_user: Curr
     return await _get_owned_strategy(db, strategy_id, current_user)
 
 
-@router.put("/strategies/{strategy_id}", response_model=StrategyOut)
+@router.api_route(
+    "/strategies/{strategy_id}",
+    response_model=StrategyOut,
+    methods=["PUT", "PATCH"],
+)
 async def update_strategy(
     strategy_id: uuid.UUID,
     payload: StrategyUpdate,

@@ -1,5 +1,20 @@
+import { mockApi } from "./mock";
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/**
+ * Mock mode lets the entire UI run without a backend. Default ON unless
+ * NEXT_PUBLIC_MOCK_DATA="0". A localStorage override ("sl_mock" = "1"/"0")
+ * wins and powers the header toggle in AppShell.
+ */
+export function isMockMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const stored = window.localStorage.getItem("sl_mock");
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return process.env.NEXT_PUBLIC_MOCK_DATA !== "0";
+}
 
 const TOKEN_KEY = "strategylab_token";
 
@@ -26,6 +41,16 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if (isMockMode()) {
+    const res = await mockApi(path, init);
+    if (res.status >= 400) {
+      const detail =
+        (res.body as { detail?: string })?.detail ?? "Mock request failed";
+      throw new ApiError(res.status, detail);
+    }
+    return res.body as T;
+  }
+
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -56,6 +81,7 @@ export interface Health {
   status: string;
   app: string;
   env: string;
+  auth_enabled?: boolean;
   database: string;
   market_data_provider: string;
   market_data_is_demo: boolean;
@@ -104,6 +130,7 @@ export interface Instrument {
   strike: number | null;
   option_type: string | null;
   lot_size: number;
+  strike_step: number | null;
   tick_size: number;
   status: string;
 }
@@ -133,6 +160,12 @@ export interface OptionChainRow {
   put_volume: number;
   call_delta: number;
   put_delta: number;
+  call_gamma: number;
+  call_theta: number;
+  call_vega: number;
+  put_gamma: number;
+  put_theta: number;
+  put_vega: number;
 }
 
 export interface OptionChain {
@@ -142,6 +175,9 @@ export interface OptionChain {
   strikes: OptionChainRow[];
   provider: string;
   is_demo: boolean;
+  strike_step: number;
+  lot_size: number;
+  expiries: string[];
 }
 
 // ---- data manager ----
@@ -248,6 +284,7 @@ export interface BacktestSummary {
   max_drawdown_pct: number;
   sharpe_ratio: number;
   total_costs: number;
+  cost_breakdown?: Record<string, number>;
   timeframe: string;
 }
 
@@ -438,4 +475,185 @@ export interface OptimizationCreate {
   target_metric?: string;
   initial_capital?: number;
   costs_pct?: number;
+}
+
+// ---- polish: reports, import/export, compare ----
+
+export interface StrategyReport {
+  strategy: {
+    id: string;
+    name: string;
+    status: string;
+    exchange: string;
+    underlying: string;
+    instrument: string;
+    strategy_type: string;
+    tags: string[];
+    current_version: number;
+    has_definition: boolean;
+    created_at: string;
+    updated_at: string;
+  };
+  versions: {
+    version: number;
+    created_at: string;
+    changelog: string | null;
+    has_definition: boolean;
+  }[];
+  latest_backtest: {
+    id: string;
+    created_at: string;
+    config: Record<string, unknown> | null;
+    summary: BacktestSummary | null;
+    trades_count: number;
+  } | null;
+  total_backtests: number;
+  optimizations: {
+    id: string;
+    method: string;
+    target_metric: string;
+    total_combinations: number;
+    best_params: Record<string, unknown> | null;
+    best_metrics: Record<string, number> | null;
+    created_at: string;
+  }[];
+}
+
+export interface StrategyExportPayload {
+  name: string;
+  description: string | null;
+  exchange: string;
+  underlying: string;
+  instrument: string;
+  strategy_type: string;
+  tags: string[];
+  definition: Record<string, unknown> | null;
+}
+
+export interface VersionCompare {
+  v1_version: number;
+  v2_version: number;
+  v1_definition: Record<string, unknown> | null;
+  v2_definition: Record<string, unknown> | null;
+  v1_backtest: { summary: BacktestSummary | null; created_at: string | null } | null;
+  v2_backtest: { summary: BacktestSummary | null; created_at: string | null } | null;
+  v1_created: string;
+  v2_created: string;
+}
+
+// ---- trade replay ----
+
+export interface ReplayCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+// ---- ai builder ----
+
+export interface AiDraftResponse {
+  definition: Record<string, unknown>;
+  source: "llm" | "rules";
+  valid: boolean;
+  warnings: string[];
+  errors: string[];
+}
+
+export interface StrategyTemplate {
+  name: string;
+  description: string;
+  tags: string[];
+  definition: Record<string, unknown>;
+}
+
+// ------------------------------------------------------------- Options Lab
+
+export interface OptionLeg {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike?: number | null;
+  strike_offset?: number | null;
+  lots?: number;
+  expiry?: string | null;
+}
+
+export interface OptionLegInput {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike_offset: number;
+  lots: number;
+}
+
+export interface PayoffLeg extends OptionLegInput {
+  strike: number;
+  premium: number;
+  iv_pct: number;
+  delta: number;
+  gamma: number;
+  theta_per_day: number;
+  vega: number;
+}
+
+export interface PayoffPoint {
+  price: number;
+  pnl: number;
+}
+
+export interface PayoffMetricsOut {
+  net_premium: number;
+  max_profit: number | null; // null = uncapped
+  max_loss: number | null;
+  breakevens: number[];
+  risk_reward: number | null;
+}
+
+export interface NetGreeks {
+  delta: number;
+  gamma: number;
+  theta_per_day: number;
+  vega: number;
+}
+
+export interface PayoffResponse {
+  underlying: string;
+  spot: number;
+  atm_strike: number;
+  expiry: string;
+  dte_days: number;
+  lot_size: number;
+  is_demo: boolean;
+  provider: string;
+  legs: PayoffLeg[];
+  curve: PayoffPoint[];
+  metrics: PayoffMetricsOut;
+  net_greeks: NetGreeks;
+}
+
+export interface MonteCarloBin {
+  lo: number;
+  hi: number;
+  count: number;
+}
+
+export interface MonteCarloStats {
+  mean: number;
+  std: number;
+  median: number;
+  p5: number;
+  p95: number;
+  worst: number;
+  best: number;
+  prob_profit: number;
+  var_95: number;
+}
+
+export interface MonteCarloResponse {
+  stats: MonteCarloStats;
+  bins: MonteCarloBin[];
+  paths: number;
+  vol_used_pct: number;
+  horizon_days: number;
 }

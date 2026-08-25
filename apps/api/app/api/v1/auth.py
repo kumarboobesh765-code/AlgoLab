@@ -2,7 +2,8 @@
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.core.deps import CurrentUser, DbSession
+from app.core.config import get_settings
+from app.core.deps import CurrentUser, DbSession, ensure_local_user
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.schemas.user import LoginRequest, Token, UserCreate, UserOut
@@ -40,3 +41,15 @@ async def login(payload: LoginRequest, db: DbSession) -> Token:
 @router.get("/me", response_model=UserOut)
 async def me(current_user: CurrentUser) -> User:
     return current_user
+
+
+@router.post("/guest", response_model=Token)
+async def guest(db: DbSession) -> Token:
+    """Issue a token for the shared local account (single-user mode only)."""
+    if get_settings().AUTH_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Guest access is disabled on this deployment",
+        )
+    user = await ensure_local_user(db)
+    return Token(access_token=create_access_token(str(user.id)))

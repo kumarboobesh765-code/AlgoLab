@@ -12,10 +12,8 @@ Walk-forward:
   - Reports both train and test metrics so overfitting is visible
 """
 
-import copy
 import itertools
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
 
 from app.backtest import BacktestConfig, run_backtest
 from app.marketdata.base import Candle
@@ -113,17 +111,17 @@ def _metric_value(result_summary: dict, metric: str) -> float:
     return float(s.get(metric, 0.0) or 0.0)
 
 
-def _result_from_summary(params: dict, result_summary: dict) -> OptResult:
-    s = result_summary.get("summary", {})
+def _result_from_summary(params: dict, summary: dict) -> OptResult:
+    """Build an OptResult from a backtest summary dict (as returned by run_backtest)."""
     return OptResult(
         params=params,
-        net_pnl=s.get("net_pnl", 0.0),
-        return_pct=s.get("return_pct", 0.0),
-        win_rate=s.get("win_rate", 0.0),
-        profit_factor=s.get("profit_factor", 0.0),
-        max_drawdown_pct=s.get("max_drawdown_pct", 0.0),
-        sharpe_ratio=s.get("sharpe_ratio", 0.0),
-        total_trades=s.get("total_trades", 0),
+        net_pnl=summary.get("net_pnl", 0.0),
+        return_pct=summary.get("return_pct", 0.0),
+        win_rate=summary.get("win_rate", 0.0),
+        profit_factor=summary.get("profit_factor", 0.0),
+        max_drawdown_pct=summary.get("max_drawdown_pct", 0.0),
+        sharpe_ratio=summary.get("sharpe_ratio", 0.0),
+        total_trades=summary.get("total_trades", 0),
     )
 
 
@@ -152,9 +150,6 @@ def run_grid_search(
             results.append(OptResult(params=params, status="failed", error=str(exc)[:500]))
 
     results.sort(key=lambda r: getattr(r, cfg.target_metric, 0.0), reverse=True)
-    for i, r in enumerate(results):
-        # rank is set externally after persisting
-        pass
     return results
 
 

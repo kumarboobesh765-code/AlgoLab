@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/Card";
 import MetaPanel from "@/components/builder/MetaPanel";
@@ -23,6 +22,7 @@ import {
   TIMEFRAMES,
   type StrategyDefinitionV1,
 } from "@/lib/builders";
+import { useAppSettings } from "@/lib/settings";
 
 const inputCls =
   "rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100";
@@ -31,8 +31,11 @@ export default function VisualBuilderPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const workflow = useBuilderWorkflow();
+  const savedTimeframe = useAppSettings().timeframe;
   const [meta, setMeta] = useState<StrategyMeta>(EMPTY_META);
-  const [definition, setDefinition] = useState<StrategyDefinitionV1>(emptyDefinition());
+  const [definition, setDefinition] = useState<StrategyDefinitionV1>(() =>
+    emptyDefinition(savedTimeframe),
+  );
 
   const indicatorIds = useMemo(() => definition.indicators.map((i) => i.id), [definition]);
   const indicatorOutputs = useMemo(() => {
@@ -57,13 +60,7 @@ export default function VisualBuilderPage() {
     return (
       <Card>
         <div className="py-10 text-center">
-          <p className="text-sm text-slate-500">Sign in to build strategies.</p>
-          <Link
-            href="/login"
-            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Sign in
-          </Link>
+          <p className="text-sm text-slate-500">Connecting to the API…</p>
         </div>
       </Card>
     );
@@ -195,6 +192,7 @@ export default function VisualBuilderPage() {
         <IndicatorsEditor
           definition={definition.indicators}
           catalog={workflow.catalog}
+          catalogError={workflow.catalogError}
           onChange={(indicators) => setDefinition({ ...definition, indicators })}
         />
       </Card>

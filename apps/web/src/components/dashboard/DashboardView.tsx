@@ -1,7 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, type BacktestRun, type Health, type Strategy } from "@/lib/api";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  api,
+  type BacktestRun,
+  type ForwardTestRun,
+  type Health,
+  type PaperAccount,
+  type PaperAccountDetail,
+  type Strategy,
+} from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -52,18 +61,26 @@ function ApiStatus() {
 }
 
 const WORKFLOW = [
-  { step: "Build", detail: "Visual · Technical · Flow", ready: true },
+  { step: "Build", detail: "Visual · Technical · Flow · AI", ready: true },
   { step: "Backtest", detail: "Historical simulation", ready: true },
-  { step: "Debug / Analyze", detail: "Why did it enter?", ready: false },
-  { step: "Forward Test", detail: "Paper · live data", ready: false },
-  { step: "Optimize", detail: "Grid · walk-forward", ready: false },
-  { step: "Compare", detail: "Versions side-by-side", ready: false },
+  { step: "Debug / Analyze", detail: "Replay bar by bar", ready: true },
+  { step: "Forward Test", detail: "Paper · auto-ticked", ready: true },
+  { step: "Optimize", detail: "Grid · walk-forward", ready: true },
+  { step: "Compare", detail: "Versions side-by-side", ready: true },
 ];
 
 export function DashboardView() {
   const { user } = useAuth();
   const [strategies, setStrategies] = useState<Strategy[] | null>(null);
+  const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [backtestCount, setBacktestCount] = useState<number | null>(null);
+  const [runningFtCount, setRunningFtCount] = useState<number | null>(null);
+  const [paperStats, setPaperStats] = useState<{
+    capital: number;
+    today: number;
+    total: number;
+    accounts: number;
+  } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,14 +94,77 @@ export function DashboardView() {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : "Failed to load");
       });
     api<BacktestRun[]>("/backtests")
-      .then((runs) => {
-        if (!cancelled) setBacktestCount(runs.length);
+      .then((rs) => {
+        if (!cancelled) {
+          setRuns(rs);
+          setBacktestCount(rs.length);
+        }
       })
       .catch(() => {});
+    api<ForwardTestRun[]>("/forward-tests?status_filter=running")
+      .then((rs) => {
+        if (!cancelled) setRunningFtCount(rs.length);
+      })
+      .catch(() => {});
+    (async () => {
+      try {
+        const accounts = await api<PaperAccount[]>("/paper/accounts");
+        if (accounts.length === 0) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        let capital = 0;
+        let totalPnl = 0;
+        let todayPnl = 0;
+        for (const account of accounts) {
+          const detail = await api<PaperAccountDetail>(`/paper/accounts/${account.id}`);
+          capital += account.initial_capital;
+          totalPnl += detail.equity - account.initial_capital;
+          const closedToday = detail.closed_positions
+            .filter((p) => p.status === "closed" && p.exit_time?.slice(0, 10) === todayStr)
+            .reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+          todayPnl += closedToday + detail.unrealized_pnl;
+        }
+        if (!cancelled) setPaperStats({ capital, today: todayPnl, total: totalPnl, accounts: accounts.length });
+      } catch {
+        /* paper stats are optional dashboard sugar */
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [user]);
+
+  const completedRuns = useMemo(
+    () => runs.filter((r) => r.status === "completed" && r.result_summary),
+    [runs],
+  );
+
+  const bestStrategy = useMemo(() => {
+    if (completedRuns.length === 0 || !strategies) return null;
+    let top = completedRuns[0];
+    for (const r of completedRuns) {
+      if (r.result_summary!.summary.return_pct > top.result_summary!.summary.return_pct) top = r;
+    }
+    const name =
+      strategies.find((s) => s.id === top.strategy_id)?.name ?? top.strategy_id.slice(0, 8);
+    return { name, ret: top.result_summary!.summary.return_pct };
+  }, [completedRuns, strategies]);
+
+  const worstDrawdown = useMemo(() => {
+    if (completedRuns.length === 0) return null;
+    return Math.max(...completedRuns.map((r) => r.result_summary!.summary.max_drawdown_pct));
+  }, [completedRuns]);
+
+  const latestRunByStrategy = useMemo(() => {
+    const map = new Map<string, { trades: number; winRate: number }>();
+    for (const r of runs) {
+      if (r.status !== "completed" || !r.result_summary) continue;
+      map.set(r.strategy_id, {
+        trades: r.result_summary.summary.total_trades,
+        winRate: r.result_summary.summary.win_rate,
+      });
+    }
+    return map;
+  }, [runs]);
 
   return (
     <div className="space-y-5">
@@ -103,22 +183,47 @@ export function DashboardView() {
 
       {/* Top metrics */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricCard label="Virtual Capital" value="—" hint="Create a paper account" />
-        <MetricCard label="Today's P&L" value="—" hint="No open paper positions" />
-        <MetricCard label="Total P&L" value="—" hint="No closed trades yet" />
+        <MetricCard
+          label="Virtual Capital"
+          value={paperStats ? paperStats.capital.toLocaleString("en-IN") : "—"}
+          hint={paperStats ? `${paperStats.accounts} paper account${paperStats.accounts > 1 ? "s" : ""}` : "Create a paper account"}
+        />
+        <MetricCard
+          label="Today's P&L"
+          value={paperStats ? `${paperStats.today >= 0 ? "+" : "-"}₹${Math.abs(paperStats.today).toLocaleString("en-IN")}` : "—"}
+          tone={paperStats ? (paperStats.today >= 0 ? "positive" : "negative") : "neutral"}
+          hint="Open + closed today"
+        />
+        <MetricCard
+          label="Total Paper P&L"
+          value={paperStats ? `${paperStats.total >= 0 ? "+" : "-"}₹${Math.abs(paperStats.total).toLocaleString("en-IN")}` : "—"}
+          tone={paperStats ? (paperStats.total >= 0 ? "positive" : "negative") : "neutral"}
+          hint="Equity vs deposited capital"
+        />
         <MetricCard
           label="Active Strategies"
           value={strategies ? String(strategies.length) : "0"}
-          hint={user ? undefined : "Sign in to sync"}
         />
-        <MetricCard label="Running Forward Tests" value="0" hint="Engine ships in Phase 7" />
+        <MetricCard
+          label="Running Forward Tests"
+          value={runningFtCount === null ? "0" : String(runningFtCount)}
+          hint="auto-ticked by the scheduler"
+        />
         <MetricCard
           label="Total Backtests"
           value={backtestCount === null ? "0" : String(backtestCount)}
           hint={backtestCount === 0 ? "Run one from the Backtest page" : undefined}
         />
-        <MetricCard label="Best Strategy" value="—" hint="Run a backtest first" />
-        <MetricCard label="Max Portfolio Drawdown" value="—" hint="Requires trade history" />
+        <MetricCard
+          label="Best Strategy"
+          value={bestStrategy ? bestStrategy.name : "—"}
+          hint={bestStrategy ? `+${bestStrategy.ret.toFixed(2)}% best backtest return` : "Run a backtest first"}
+        />
+        <MetricCard
+          label="Worst Backtest DD"
+          value={worstDrawdown !== null ? `-${worstDrawdown.toFixed(2)}%` : "—"}
+          hint="Deepest drawdown across backtests"
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -128,26 +233,24 @@ export function DashboardView() {
           subtitle="All strategies and their lifecycle state"
           className="xl:col-span-2"
           actions={
-            <a
+            <Link
               href="/strategies"
               className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
             >
               View all
-            </a>
+            </Link>
           }
         >
           {!user ? (
-            <p className="py-8 text-center text-sm text-slate-400">
-              Sign in to view and manage your strategies.
-            </p>
+            <p className="py-8 text-center text-sm text-slate-400">Connecting to the API…</p>
           ) : strategies === null ? (
             <p className="py-8 text-center text-sm text-slate-400">
               {loadError ?? "Loading strategies…"}
             </p>
           ) : strategies.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-400">
-              No strategies yet. The Visual Builder ships in Phase 4 — until then you can create
-              placeholder strategies from the Strategies page.
+              No strategies yet — create one in the Visual Builder or start from a template in the
+              Strategy Library.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -173,8 +276,14 @@ export function DashboardView() {
                       <td className="py-2 pr-3">
                         <StatusBadge status={s.status} />
                       </td>
-                      <td className="py-2 pr-3 text-slate-400">—</td>
-                      <td className="py-2 text-slate-400">—</td>
+                      <td className="py-2 pr-3 tabular-nums text-slate-600">
+                        {latestRunByStrategy.has(s.id) ? latestRunByStrategy.get(s.id)!.trades : "—"}
+                      </td>
+                      <td className="py-2 tabular-nums text-slate-600">
+                        {latestRunByStrategy.has(s.id)
+                          ? `${latestRunByStrategy.get(s.id)!.winRate.toFixed(1)}%`
+                          : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

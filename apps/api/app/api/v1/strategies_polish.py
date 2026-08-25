@@ -1,7 +1,6 @@
 """Strategy polish endpoints: report, import/export, templates, version comparison."""
 
 import uuid
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -64,7 +63,7 @@ async def list_templates():
     return get_templates()
 
 
-@router.get("/strategy/{strategy_id}/export", response_model=StrategyExport)
+@router.get("/strategies/{strategy_id}/export", response_model=StrategyExport)
 async def export_strategy(
     strategy_id: uuid.UUID,
     db: DbSession,

@@ -45,9 +45,13 @@ A professional Indian-market algorithmic trading **research platform**.
 | **Forward Test UI**: start/tick/pause/resume/stop lifecycle with fills table | ✅ |
 | Grid search + walk-forward optimization with parameter range sweep | ✅ |
 | **Optimization UI**: parameter editor, ranked results, train/test Sharpe for overfitting | ✅ |
-| Backend test suite (150 tests) | ✅ |
+| **Reports UI**: per-strategy report — meta, version history, latest backtest metrics, recent optimizations | ✅ |
+| **Version compare**: backtest metric deltas + side-by-side definition diff between any two versions | ✅ |
+| **Strategy import/export**: JSON download/upload from the Strategies page (`/strategies/{id}/export`, `/strategies/import`) | ✅ |
+| **Trade Replay debugger**: bar-by-bar playback of any completed run — candlestick chart with B/S markers, equity strip, position & unrealized P&L panels | ✅ |
+| Backend test suite (157 tests) | ✅ |
 
-Everything else (optimization, trade replay/debugger)
+Everything else (analytics, market scanner, portfolio)
 is intentionally marked **Coming Soon** in the UI — see the roadmap below.
 
 ## Repository layout
@@ -150,10 +154,10 @@ See [.env.example](.env.example). Key values:
 
 ```powershell
 cd apps/api
-uv run pytest -v        # 150 tests: auth, strategies, providers, ingestion, quant engine, backtest engine + API, paper engine, optimizer
+uv run pytest -v        # 180 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer, forward-test API, AI drafting, alerts
 cd apps/web
 npm run lint            # ESLint (react-hooks, next)
-npm run build           # type-check + production build of all 20 routes
+npm run build           # type-check + production build of all 24 routes
 ```
 
 ## Roadmap
@@ -164,10 +168,13 @@ Phases follow the master plan:
 2. ✅ **Market data** — Dhan adapter, instrument master, historical ingestion, data validation
 3. ✅ **Quant engine** — indicators, conditions, variables, formula engine, strategy schema + validator
 4. ✅ **Strategy creators** — Visual Builder, Technical Builder, Strategy Flow
-5. ✅ **Backtest engine + UI** — historical simulation over stored candles, metrics, equity curve, trade list (trade replay/debugger still ahead)
+5. ✅ **Backtest engine + UI** — historical simulation over stored candles, metrics, equity curve, trade list
 6. ✅ **Forward testing + paper accounts** — incremental tick engine, virtual capital, equity tracking, start/tick/pause/resume/stop lifecycle
 7. ✅ **Optimization** — grid search + walk-forward analysis with parameter range sweep and overfitting detection
-8. Polish — reports, import/export, templates, version comparison
+8. ✅ **Polish** — Reports UI, version comparison, JSON import/export, trade replay/debugger
+9. ✅ **Platform extras** — Analytics / Market Scanner / Portfolio pages, AI Builder (`POST /ai/draft-strategy`, LLM-first with deterministic rule-based fallback), Strategy Library, Settings, forward-test auto-tick scheduler, Telegram/webhook alerts
+
+Remaining (post-roadmap): DhanHQ live verification (4 `LIVE-VERIFY` markers need real credentials), options analytics (Greeks/payoffs), and broker execution behind a kill switch.
 
 ## Disclaimer
 

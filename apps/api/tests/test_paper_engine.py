@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.paper import required_warmup, step_paper
 from app.marketdata.base import Candle
+from app.paper import required_warmup, step_paper
 from app.quant.schema import StrategyDefinition
 
 T0 = datetime(2026, 8, 3, 9, 15, tzinfo=UTC)

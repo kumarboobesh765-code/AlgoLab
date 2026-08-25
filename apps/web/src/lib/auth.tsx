@@ -14,6 +14,8 @@ import { api, getToken, setToken, type User } from "@/lib/api";
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  /** true when the API is unreachable (guest/bootstrap failed) */
+  offline: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, fullName?: string) => Promise<void>;
   logout: () => void;
@@ -24,10 +26,30 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function bootstrap() {
+      // Single-user deployments report auth_enabled=false: silently obtain a
+      // guest token so the app works without any login screen.
+      try {
+        const health = await api<{ auth_enabled?: boolean }>("/health");
+        if (!cancelled) setOffline(false);
+        if (health.auth_enabled === false) {
+          const tok = await api<{ access_token: string }>("/auth/guest", { method: "POST" });
+          setToken(tok.access_token);
+          const me = await api<User>("/auth/me");
+          if (!cancelled) {
+            setUser(me);
+            setLoading(false);
+          }
+          return;
+        }
+      } catch {
+        if (!cancelled) setOffline(true);
+        /* fall through to normal token flow */
+      }
       if (!getToken()) {
         setLoading(false);
         return;
@@ -73,8 +95,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout }),
-    [user, loading, login, register, logout],
+    () => ({ user, loading, offline, login, register, logout }),
+    [user, loading, offline, login, register, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

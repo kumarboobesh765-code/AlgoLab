@@ -33,6 +33,7 @@ DHAN_INDICES: dict[str, dict] = {
     "MIDCPNIFTY": {"security_id": "442", "exchange": "NSE", "exchange_segment": "IDX_I"},
     # LIVE-VERIFY: confirm BSE index segment id ("IDX_B") against live API.
     "SENSEX": {"security_id": "51", "exchange": "BSE", "exchange_segment": "IDX_B"},
+    "BANKEX": {"security_id": "512", "exchange": "BSE", "exchange_segment": "IDX_B"},
 }
 
 # DhanHQ v2 supported chart intervals. 30m is NOT offered by Dhan — callers

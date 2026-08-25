@@ -121,7 +121,6 @@ def step_paper(
 
     pos_cfg = definition.position
     direction_mode = pos_cfg.direction
-    risk = definition.risk
 
     position = dict(position_state) if position_state else None
     pending = pending_action

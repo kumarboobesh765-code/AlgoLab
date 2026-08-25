@@ -27,6 +27,30 @@ from app.quant.schema import StrategyDefinition
 INTERVAL_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 375}
 
 
+def _leg_costs(price: float, qty: float, is_sell: bool) -> dict:
+    """Indian F&O per-fill cost breakdown (INR).
+
+    STT applies on the sell side only (0.0625% of premium, post Oct-2024).
+    Exchange txn charge ~0.05% of premium, SEBI ~0.0001% of turnover,
+    stamp duty ~0.03% of premium, flat brokerage per order, GST 18% on
+    (brokerage + exchange + SEBI).
+    """
+    notional = abs(qty) * price
+    stt = 0.000625 * notional if is_sell else 0.0
+    stamp = 0.0003 * notional
+    exchange = 0.0005 * notional
+    sebi = 0.000001 * notional
+    brokerage = 20.0
+    gst = 0.18 * (brokerage + exchange + sebi)
+    return {"stt": stt, "stamp": stamp, "exchange": exchange, "sebi": sebi, "brokerage": brokerage, "gst": gst}
+
+
+def _acc(target: dict, src: dict) -> None:
+    for k, v in src.items():
+        target[k] = target.get(k, 0.0) + v
+    target["total"] = target.get("total", 0.0) + sum(src.values())
+
+
 class BacktestError(ValueError):
     """Raised for invalid backtest inputs."""
 
@@ -114,6 +138,15 @@ def run_backtest(
     trades: list[Trade] = []
     equity_curve: list[dict] = []
     total_costs = 0.0
+    cost_breakdown: dict[str, float] = {
+        "stt": 0.0,
+        "exchange": 0.0,
+        "sebi": 0.0,
+        "stamp": 0.0,
+        "brokerage": 0.0,
+        "gst": 0.0,
+        "total": 0.0,
+    }
     equity_peak = cash
     max_drawdown = 0.0
 
@@ -124,14 +157,16 @@ def run_backtest(
         return max(pos_cfg.quantity, 0.0)
 
     def close_position(index: int, price: float, reason: str) -> None:
-        nonlocal cash, position, total_costs
+        nonlocal cash, position, total_costs, cost_breakdown
         assert position is not None
         gross = (price - position.entry_price) * position.quantity * position.dir_sign
-        exit_cost = price * position.quantity * cfg.costs_pct / 100.0
-        total_costs += exit_cost
-        cash += gross - exit_cost
+        exit_costs = _leg_costs(price, position.quantity, is_sell=True)
+        _acc(cost_breakdown, exit_costs)
+        total_costs = cost_breakdown["total"]
+        exit_cost_val = sum(exit_costs.values())
+        cash += gross - exit_cost_val
         invested = position.entry_price * position.quantity
-        pnl = gross - exit_cost - position.entry_cost
+        pnl = gross - exit_cost_val - position.entry_cost
         if reason == "stop_loss" and position.trailed:
             reason = "trailing_stop"
         trades.append(
@@ -151,7 +186,7 @@ def run_backtest(
         position = None
 
     def open_position(index: int, dir_sign: int) -> None:
-        nonlocal cash, position, total_costs
+        nonlocal cash, position, total_costs, raw_costs
         price = candles[index].open
         qty = size_quantity(price)
         if qty <= 0:
@@ -159,6 +194,7 @@ def run_backtest(
         entry_cost = price * qty * cfg.costs_pct / 100.0
         total_costs += entry_cost
         cash -= entry_cost
+        _acc(raw_costs, _leg_costs(price, qty, is_sell=False))
         stop = target = trail = None
         if risk is not None:
             if risk.stop_loss_pct is not None:
@@ -184,7 +220,7 @@ def run_backtest(
             trail_pct=trail,
             trailed=False,
             extreme=candles[index].high if dir_sign == 1 else candles[index].low,
-            entry_cost=entry_cost,
+            entry_cost=entry_cost_val,
         )
 
     n = len(candles)
@@ -264,7 +300,7 @@ def run_backtest(
         equity_curve[-1]["equity"] = round(cash, 2)
 
     summary = _build_summary(
-        trades, equity_curve, cfg, definition.timeframe, total_costs, max_drawdown
+        trades, equity_curve, cfg, definition.timeframe, total_costs, max_drawdown, cost_breakdown
     )
     return BacktestResult(trades=trades, equity_curve=equity_curve, summary=summary)
 
@@ -276,6 +312,7 @@ def _build_summary(
     timeframe: str,
     total_costs: float,
     max_drawdown: float,
+    cost_breakdown: dict[str, float],
 ) -> dict:
     final_equity = equity_curve[-1]["equity"] if equity_curve else cfg.initial_capital
     net_pnl = final_equity - cfg.initial_capital
@@ -318,5 +355,6 @@ def _build_summary(
         "max_drawdown_pct": round(max_drawdown, 4),
         "sharpe_ratio": round(sharpe, 4),
         "total_costs": round(total_costs, 2),
+        "cost_breakdown": {k: round(v, 2) for k, v in cost_breakdown.items()},
         "timeframe": timeframe,
     }

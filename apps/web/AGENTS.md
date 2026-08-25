@@ -17,6 +17,8 @@ All routes are client components ("use client") since they fetch from the API.
 | /backtest | Backtest | Run form, metrics, equity curve, trade table, history |
 | /forward-test | Forward Test | Start/tick/pause/resume/stop lifecycle |
 | /optimization | Optimization | Grid search + walk-forward config + results table |
+| /reports | Reports | Per-strategy report, version history, version compare with metric deltas |
+| /replay | Trade Replay | Bar-by-bar playback of completed backtests (candles + B/S markers + equity) |
 | /builder/visual | Visual Builder | 7-step guided strategy creation |
 | /builder/technical | Technical Builder | JSON editor + templates + validate/preview |
 | /builder/flow | Strategy Flow | Pipeline visualization with inline editing |

@@ -9,6 +9,8 @@ import {
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
+import { downloadCsv } from "@/lib/csv";
+import { useAppSettings } from "@/lib/settings";
 
 function todayISO(offsetDays = 0): string {
   const d = new Date();
@@ -96,15 +98,24 @@ export default function BacktestPage() {
   const [strategyId, setStrategyId] = useState("");
   const [start, setStart] = useState(todayISO(-30));
   const [end, setEnd] = useState(todayISO(-1));
-  const [capital, setCapital] = useState("100000");
-  const [costs, setCosts] = useState("0.03");
+  const savedSettings = useAppSettings();
+  // null = follow saved settings until the user edits the field
+  const [capitalDraft, setCapitalDraft] = useState<string | null>(null);
+  const [costsDraft, setCostsDraft] = useState<string | null>(null);
+  const capital = capitalDraft ?? String(savedSettings.defaultCapital);
+  const costs = costsDraft ?? String(savedSettings.costsPct);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [run, setRun] = useState<BacktestRun | null>(null);
   const [history, setHistory] = useState<BacktestRun[]>([]);
 
   const refreshHistory = useCallback(() => {
-    api<BacktestRun[]>("/backtests").then(setHistory).catch(() => {});
+    api<BacktestRun[]>("/backtests")
+      .then(setHistory)
+      .catch((e) =>
+        setLoadError(e instanceof Error ? e.message : "Could not load backtest history"),
+      );
   }, []);
 
   useEffect(() => {
@@ -119,7 +130,9 @@ export default function BacktestPage() {
           );
         }
       })
-      .catch(() => {});
+      .catch((e) =>
+        setLoadError(e instanceof Error ? e.message : "Could not load strategies"),
+      );
     refreshHistory();
   }, [refreshHistory]);
 
@@ -139,8 +152,8 @@ export default function BacktestPage() {
           strategy_id: strategyId,
           start,
           end,
-          initial_capital: Number(capital) || 100000,
-          costs_pct: Number(costs) || 0,
+          initial_capital: Number(capital) > 0 ? Number(capital) : savedSettings.defaultCapital,
+          costs_pct: Number(costs) >= 0 ? Number(costs) : savedSettings.costsPct,
         }),
       });
       setRun(created);
@@ -156,8 +169,8 @@ export default function BacktestPage() {
     try {
       setRun(await api<BacktestRun>(`/backtests/${id}`));
       setError(null);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load that run");
     }
   }
 
@@ -166,6 +179,11 @@ export default function BacktestPage() {
 
   return (
     <div className="space-y-4">
+      {loadError && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600 ring-1 ring-inset ring-red-200">
+          {loadError}
+        </p>
+      )}
       <Card
         title="Run a backtest"
         subtitle="Simulates the strategy definition over stored candles — ingest history via Data Manager first."
@@ -212,7 +230,7 @@ export default function BacktestPage() {
               type="number"
               value={capital}
               min="1"
-              onChange={(e) => setCapital(e.target.value)}
+              onChange={(e) => setCapitalDraft(e.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
             />
           </label>
@@ -223,7 +241,7 @@ export default function BacktestPage() {
               value={costs}
               step="0.01"
               min="0"
-              onChange={(e) => setCosts(e.target.value)}
+              onChange={(e) => setCostsDraft(e.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
             />
           </label>
@@ -277,16 +295,54 @@ export default function BacktestPage() {
             <MetricCard label="Avg win" value={fmtMoney(s.avg_win)} tone="green" />
             <MetricCard label="Avg loss" value={fmtMoney(s.avg_loss)} tone="red" />
             <MetricCard label="Costs" value={fmtMoney(s.total_costs)} />
+            {s.cost_breakdown && (
+              <Card title="Cost breakdown (INR)" subtitle="Estimated transaction charges">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                  {Object.entries(s.cost_breakdown).map(([k, v]) => (
+                    <MetricCard key={k} label={k.toUpperCase()} value={fmtMoney(v)} />
+                  ))}
+                </div>
+              </Card>
+            )}
             <MetricCard label="Largest loss" value={fmtMoney(s.largest_loss)} tone="red" />
           </div>
 
-          <h3 className="mt-4 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Equity curve
+          <h3 className="mt-4 mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <span>Equity curve</span>
+            <button
+              onClick={() =>
+                downloadCsv(
+                  `equity_${selected?.id.slice(0, 8) ?? "run"}.csv`,
+                  ["time", "equity"],
+                  results.equity_curve.map((p) => [p.time, p.equity]),
+                )
+              }
+              className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] font-medium normal-case text-slate-600 hover:bg-slate-50"
+            >
+              Export CSV
+            </button>
           </h3>
           <EquityCurve results={results} />
 
-          <h3 className="mt-4 mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            Trades ({results.trades.length})
+          <h3 className="mt-4 mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <span>Trades ({results.trades.length})</span>
+            {results.trades.length > 0 && (
+              <button
+                onClick={() =>
+                  downloadCsv(
+                    `trades_${selected?.id.slice(0, 8) ?? "run"}.csv`,
+                    ["#", "direction", "entry_time", "exit_time", "qty", "entry_price", "exit_price", "pnl", "pnl_pct", "bars_held", "exit_reason"],
+                    results.trades.map((t, i) => [
+                      i + 1, t.direction, t.entry_time, t.exit_time, t.quantity,
+                      t.entry_price, t.exit_price, t.pnl, t.pnl_pct, t.bars_held, t.exit_reason,
+                    ]),
+                  )
+                }
+                className="rounded border border-slate-200 px-1.5 py-0.5 text-[11px] font-medium normal-case text-slate-600 hover:bg-slate-50"
+              >
+                Export CSV
+              </button>
+            )}
           </h3>
           {results.trades.length === 0 ? (
             <p className="text-xs text-slate-500">No trades were generated in this range.</p>
@@ -349,16 +405,18 @@ export default function BacktestPage() {
 
       <Card title="Run history" subtitle="Latest backtests across all strategies">
         {history.length === 0 ? (
-          <p className="text-xs text-slate-500">No backtest runs yet.</p>
+          <p className="text-xs text-slate-500">
+            {loadError ? "History unavailable — check the error above." : "No backtest runs yet."}
+          </p>
         ) : (
           <ul className="divide-y divide-slate-100">
             {history.map((h) => {
               const hs = h.result_summary?.summary;
               return (
-                <li key={h.id}>
+                <li key={h.id} className="group flex items-center">
                   <button
                     onClick={() => loadRun(h.id)}
-                    className="flex w-full items-center justify-between gap-3 py-2 text-left text-xs hover:bg-slate-50"
+                    className="flex flex-1 items-center justify-between gap-3 py-2 text-left text-xs hover:bg-slate-50"
                   >
                     <span className="flex items-center gap-2">
                       <Badge
@@ -382,6 +440,24 @@ export default function BacktestPage() {
                       </span>
                     )}
                   </button>
+                  {h.status !== "running" && (
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm("Delete this backtest run?")) return;
+                        try {
+                          await api(`/backtests/${h.id}`, { method: "DELETE" });
+                          setHistory((cur) => cur.filter((x) => x.id !== h.id));
+                          if (run?.id === h.id) setRun(null);
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "Delete failed");
+                        }
+                      }}
+                      title="Delete run"
+                      className="ml-2 hidden rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-500 group-hover:block hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </li>
               );
             })}

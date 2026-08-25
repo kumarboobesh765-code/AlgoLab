@@ -136,6 +136,51 @@ async def list_backtests(
     return list(runs)
 
 
+@router.get("/{run_id}/candles")
+async def get_backtest_candles(
+    run_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> list[dict]:
+    """Stored candles exactly as the engine consumed them (for trade replay)."""
+    result = await db.execute(
+        select(BacktestRun).where(
+            BacktestRun.id == run_id, BacktestRun.user_id == current_user.id
+        )
+    )
+    run = result.scalars().first()
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest run not found")
+    cfg = run.config or {}
+    try:
+        start = datetime.combine(date.fromisoformat(str(cfg["start"])), datetime.min.time(), tzinfo=UTC)
+        end_dt = datetime.combine(
+            date.fromisoformat(str(cfg["end"])), datetime.max.time().replace(microsecond=0), tzinfo=UTC
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Run has no valid candle range in config"
+        ) from exc
+    candles = await load_candles(
+        db,
+        symbol=str(cfg["symbol"]),
+        interval=str(cfg["timeframe"]),
+        start=start,
+        end=end_dt,
+    )
+    return [
+        {
+            "timestamp": c.timestamp.isoformat(),
+            "open": c.open,
+            "high": c.high,
+            "low": c.low,
+            "close": c.close,
+            "volume": c.volume,
+        }
+        for c in candles
+    ]
+
+
 @router.get("/{run_id}", response_model=BacktestRunDetail)
 async def get_backtest(
     run_id: uuid.UUID,
@@ -151,3 +196,25 @@ async def get_backtest(
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest run not found")
     return run
+
+
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_backtest(
+    run_id: uuid.UUID,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> None:
+    result = await db.execute(
+        select(BacktestRun).where(
+            BacktestRun.id == run_id, BacktestRun.user_id == current_user.id
+        )
+    )
+    run = result.scalars().first()
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Backtest run not found")
+    if run.status == "running":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Cannot delete a run that is still executing"
+        )
+    await db.delete(run)
+    await db.commit()

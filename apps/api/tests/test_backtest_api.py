@@ -139,6 +139,38 @@ async def test_happy_path_run(client, auth_headers):
     assert "trades" in detail["result_summary"]
 
 
+async def test_run_candles_endpoint(client, auth_headers):
+    await ingest_demo_history(client, auth_headers)
+    strategy = await create_strategy(client, auth_headers, valid_definition())
+    created = (
+        await client.post(
+            BASE,
+            json={"strategy_id": strategy["id"], "start": "2026-08-10", "end": "2026-08-14"},
+            headers=auth_headers,
+        )
+    ).json()
+
+    resp = await client.get(f"{BASE}/{created['id']}/candles", headers=auth_headers)
+    assert resp.status_code == 200
+    candles = resp.json()
+    assert len(candles) == created["config"]["bars"]
+    first = candles[0]
+    for key in ("timestamp", "open", "high", "low", "close", "volume"):
+        assert key in first
+
+    # User isolation applies to candle access too.
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": "candles-other@example.com", "password": "secret123"},
+    )
+    login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "candles-other@example.com", "password": "secret123"},
+    )
+    other = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert (await client.get(f"{BASE}/{created['id']}/candles", headers=other)).status_code == 404
+
+
 async def test_run_user_isolation(client, auth_headers):
     await ingest_demo_history(client, auth_headers)
     strategy = await create_strategy(client, auth_headers, valid_definition())

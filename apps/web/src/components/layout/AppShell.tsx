@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuth } from "@/lib/auth";
+import { isMockMode } from "@/lib/api";
 import { PAGE_TITLES } from "@/lib/nav";
 
 function titleForPathname(pathname: string): string {
@@ -16,7 +17,18 @@ function titleForPathname(pathname: string): string {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user, logout, offline } = useAuth();
+  const [mock, setMock] = useState(false);
+
+  useEffect(() => {
+    setMock(isMockMode());
+  }, []);
+
+  function toggleMock() {
+    const next = !mock;
+    window.localStorage.setItem("sl_mock", next ? "1" : "0");
+    window.location.reload();
+  }
 
   return (
     <div className="min-h-screen bg-[#F5F7FA]">
@@ -30,6 +42,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
               Research Platform · V1
             </span>
+            <button
+              onClick={toggleMock}
+              title="Toggle mock data (no backend needed)"
+              className={`hidden rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-inset sm:inline-flex ${
+                mock
+                  ? "bg-amber-100 text-amber-700 ring-amber-300"
+                  : "bg-slate-100 text-slate-600 ring-slate-200"
+              }`}
+            >
+              Mock: {mock ? "ON" : "OFF"}
+            </button>
             {user ? (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-600">{user.email}</span>
@@ -41,15 +64,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </button>
               </div>
             ) : (
-              <Link
-                href="/login"
-                className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
-              >
-                Sign in
-              </Link>
+              <span className="text-xs text-slate-400">Connecting…</span>
             )}
           </div>
         </header>
+
+        {offline && (
+          <div className="border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800">
+            API offline — pages can&apos;t load data. Start it with{" "}
+            <code className="rounded bg-amber-100 px-1 font-mono">powershell -File start-dev.ps1</code>{" "}
+            from the repo root, then refresh.
+          </div>
+        )}
 
         <main className="flex-1 px-6 py-5">{children}</main>
 
