@@ -101,6 +101,8 @@ export default function ExecutionPage() {
   }, [broker]);
 
   useEffect(() => {
+    // Initial load: setState happens inside async .then() callbacks in refresh()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
 
