@@ -120,9 +120,13 @@ async def test_stop_loss_triggers():
 async def test_target_triggers():
     from app.quant.schema import StrategyDefinition
 
-    d = cross_def(risk={"target_pct": 1.0})
+    d = cross_def(position={"quantity_type": "fixed", "quantity": 100}, risk={"target_pct": 1.0})
     closes = [100, 100, 100, 100, 100, 102, 104, 106, 108, 110]
-    result = run_backtest(StrategyDefinition.model_validate(d), make_candles(closes))
+    result = run_backtest(
+        StrategyDefinition.model_validate(d),
+        make_candles(closes),
+        config=BacktestConfig(costs_pct=0.001),
+    )
     targets = [t for t in result.trades if t.exit_reason == "target"]
     assert targets, "expected a target exit"
     assert targets[0].pnl > 0
@@ -131,11 +135,12 @@ async def test_target_triggers():
 async def test_trailing_stop_ratchets():
     from app.quant.schema import StrategyDefinition
 
-    d = cross_def(risk={"trailing_sl_pct": 1.0})
-    # Steady climb then sharp reversal — trailing stop locks in profit.
+    d = cross_def(position={"quantity_type": "fixed", "quantity": 100}, risk={"trailing_sl_pct": 1.0})
     closes = [100, 100, 100, 100, 100, 104, 108, 112, 116, 120, 124, 128, 120, 116]
     result = run_backtest(
-        StrategyDefinition.model_validate(d), make_candles(closes, spread=0.1)
+        StrategyDefinition.model_validate(d),
+        make_candles(closes, spread=0.1),
+        config=BacktestConfig(costs_pct=0.001),
     )
     trails = [t for t in result.trades if t.exit_reason == "trailing_stop"]
     assert trails, "expected trailing stop exit"

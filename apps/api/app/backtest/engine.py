@@ -138,6 +138,7 @@ def run_backtest(
     trades: list[Trade] = []
     equity_curve: list[dict] = []
     total_costs = 0.0
+    raw_costs: dict[str, float] = {}
     cost_breakdown: dict[str, float] = {
         "stt": 0.0,
         "exchange": 0.0,
@@ -220,7 +221,7 @@ def run_backtest(
             trail_pct=trail,
             trailed=False,
             extreme=candles[index].high if dir_sign == 1 else candles[index].low,
-            entry_cost=entry_cost_val,
+            entry_cost=entry_cost,
         )
 
     n = len(candles)

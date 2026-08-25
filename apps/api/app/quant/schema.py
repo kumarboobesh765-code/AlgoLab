@@ -89,8 +89,57 @@ class OptionLeg(BaseModel):
     option_type: Literal["CE", "PE"] = "CE"
     strike: float | None = None
     strike_offset: int | None = None
+    strike_formula: str | None = None  # e.g., "ATM+200", "SPOT-5%", "DELTA:0.20"
     lots: int = Field(default=1, ge=1)
+    lots_formula: str | None = None  # e.g., "DELTA_NEUTRAL", "CAPITAL_PCT:10"
     expiry: str | None = None
+    expiry_formula: str | None = None  # e.g., "THIS_WEEK", "NEXT_WEEK", "THIS_MONTH", "NEXT_MONTH"
+
+
+class OptionGreeks(BaseModel):
+    """Option Greeks for a single leg at a point in time."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    delta: float = 0.0
+    gamma: float = 0.0
+    theta: float = 0.0
+    vega: float = 0.0
+    rho: float = 0.0
+    iv: float = 0.0
+    price: float = 0.0
+
+
+class OptionPosition(BaseModel):
+    """An option position with current Greeks and P&L."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    leg_index: int
+    symbol: str
+    action: str
+    option_type: str
+    strike: float
+    expiry: str
+    lots: int
+    entry_price: float
+    current_price: float
+    greeks: OptionGreeks
+    unrealized_pnl: float = 0.0
+    day_pnl: float = 0.0
+
+
+class OptionsStrategy(BaseModel):
+    """A multi-leg options strategy (straddle, strangle, iron condor, etc.)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = ""
+    legs: list[OptionLeg] = Field(default_factory=list, max_length=12)
+    underlying: InstrumentRef | None = None
+    strategy_type: Literal["custom", "straddle", "strangle", "iron_condor", "butterfly", "calendar", "vertical_spread", "ratio_spread"] = "custom"
+    target_delta: float | None = None  # For delta-neutral strategies
+    auto_adjust: bool = False  # Auto-roll/hedge
 
 
 class StrategyDefinition(BaseModel):

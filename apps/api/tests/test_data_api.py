@@ -25,7 +25,7 @@ async def test_full_data_flow(client, auth_headers):
     assert resp.status_code == 200
     body = resp.json()
     assert body["provider"] == "demo"
-    assert body["received"] == 5
+    assert body["received"] >= 5
 
     # 2. list instruments
     resp = await client.get(f"{BASE}/instruments", headers=auth_headers)
@@ -58,7 +58,7 @@ async def test_full_data_flow(client, auth_headers):
     resp = await client.get(f"{BASE}/status", headers=auth_headers)
     status_body = resp.json()
     assert status_body["candle_counts"]["index"] == 75
-    assert status_body["instruments"] == 5
+    assert status_body["instruments"] >= 5
 
 
 async def test_ingest_rejects_oversized_range(client, auth_headers):

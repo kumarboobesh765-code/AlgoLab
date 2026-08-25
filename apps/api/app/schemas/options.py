@@ -102,3 +102,83 @@ class MonteCarloResponse(BaseModel):
     paths: int
     vol_used_pct: float
     horizon_days: int
+
+
+class AnalyticsRequest(BaseModel):
+    underlying: str = Field(default="NIFTY", min_length=1, max_length=50)
+    expiry: str | None = None
+
+
+class PCRResponse(BaseModel):
+    pcr_oi: float
+    pcr_volume: float
+    total_call_oi: int
+    total_put_oi: int
+    total_call_volume: int
+    total_put_volume: int
+    strike_pcr: dict[str, float]
+
+
+class MaxPainResponse(BaseModel):
+    max_pain_strike: float
+    min_pain: float
+    support_resistance: dict
+
+
+class IVSurfaceResponse(BaseModel):
+    atm_iv: float
+    skew: float
+    kurtosis: float
+
+
+class GreeksHeatmapResponse(BaseModel):
+    net_delta: float
+    net_gamma: float
+    net_theta: float
+    net_vega: float
+    strike_greeks: dict[str, dict[str, float]]
+
+
+class OptionChainAnalyticsResponse(BaseModel):
+    underlying: str
+    spot: float
+    expiry: str
+    pcr: PCRResponse
+    max_pain: MaxPainResponse
+    iv_surface: IVSurfaceResponse
+    greeks_heatmap: GreeksHeatmapResponse
+
+
+class OptionsBacktestRequest(BaseModel):
+    underlying: str = Field(default="NIFTY", min_length=1, max_length=50)
+    legs: list[dict] = Field(min_length=1, max_length=12)
+    dte_days: int = Field(default=7, ge=0, le=365)
+    volatility: float = Field(default=0.20, gt=0, le=5)
+    lot_size: int = Field(default=50, ge=1, le=10000)
+    initial_capital: float = Field(default=100000, gt=0)
+    auto_roll: bool = Field(default=True)
+
+
+class OptionsLegPnLOut(BaseModel):
+    leg_index: int
+    action: str
+    option_type: str
+    strike: float
+    expiry: str
+    lots: int
+    entry_price: float
+    entry_date: str
+    current_price: float
+    current_date: str
+    days_held: int
+    gross_pnl: float
+    costs: dict[str, float]
+    net_pnl: float
+    exit_reason: str | None = None
+
+
+class OptionsBacktestResponse(BaseModel):
+    legs: list[OptionsLegPnLOut]
+    daily_values: list[dict]
+    summary: dict
+    cost_breakdown: dict[str, float]

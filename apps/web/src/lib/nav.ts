@@ -39,10 +39,12 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Tools",
     items: [
       { label: "Option Chain", href: "/tools/option-chain" },
+      { label: "Option Analytics", href: "/tools/option-analytics" },
       { label: "Payoff Lab", href: "/tools/payoff-lab" },
       { label: "Strategy Library", href: "/tools/strategy-library" },
       { label: "Data Manager", href: "/tools/data-manager" },
       { label: "Paper Accounts", href: "/tools/paper-accounts" },
+      { label: "Execution", href: "/tools/execution" },
       { label: "Optimization", href: "/optimization" },
       { label: "Settings", href: "/tools/settings" },
     ],

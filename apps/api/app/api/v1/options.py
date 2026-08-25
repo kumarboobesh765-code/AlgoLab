@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, HTTPException, status
 
 from app.core.cache import get_cache
@@ -6,13 +8,22 @@ from app.core.deps import ProviderDep
 from app.options import lab
 from app.options.lab import OptionsLabError, ResolvedLeg
 from app.schemas.options import (
+    AnalyticsRequest,
+    GreeksHeatmapResponse,
+    IVSurfaceResponse,
+    MaxPainResponse,
     MonteCarloRequest,
     MonteCarloResponse,
+    OptionChainAnalyticsResponse,
+    OptionsBacktestRequest,
+    OptionsBacktestResponse,
+    OptionsLegPnLOut,
     PayoffLeg,
     PayoffMetricsOut,
     PayoffPoint,
     PayoffRequest,
     PayoffResponse,
+    PCRResponse,
 )
 
 router = APIRouter(prefix="/options", tags=["options"])
@@ -137,3 +148,150 @@ async def monte_carlo(provider: ProviderDep, request: MonteCarloRequest) -> Mont
         vol_override=request.vol_override,
     )
     return MonteCarloResponse(**result)
+
+
+@router.post("/analytics", response_model=OptionChainAnalyticsResponse)
+async def analytics(provider: ProviderDep, request: AnalyticsRequest) -> OptionChainAnalyticsResponse:
+    chain = await _option_chain(provider, request.underlying, request.expiry)
+
+    from datetime import date
+
+    from app.quant.options.analytics import (
+        OptionChainSnapshot,
+        calculate_support_resistance_from_oi,
+        get_option_chain_analytics,
+    )
+
+    strikes = [row["strike"] for row in chain["strikes"]]
+    expiry_str = chain.get("expiry", "")
+    try:
+        expiry = date.fromisoformat(expiry_str)
+    except ValueError:
+        expiry = date.today()
+
+    snapshot = OptionChainSnapshot(
+        underlying=chain["underlying"],
+        expiry=expiry,
+        spot=chain["spot"],
+        strikes=strikes,
+        call_oi={row["strike"]: row.get("call_oi", 0) for row in chain["strikes"]},
+        call_volume={row["strike"]: row.get("call_volume", 0) for row in chain["strikes"]},
+        call_ltp={row["strike"]: row.get("call_ltp", 0) for row in chain["strikes"]},
+        call_bid={row["strike"]: row.get("call_bid", 0) for row in chain["strikes"]},
+        call_ask={row["strike"]: row.get("call_ask", 0) for row in chain["strikes"]},
+        put_oi={row["strike"]: row.get("put_oi", 0) for row in chain["strikes"]},
+        put_volume={row["strike"]: row.get("put_volume", 0) for row in chain["strikes"]},
+        put_ltp={row["strike"]: row.get("put_ltp", 0) for row in chain["strikes"]},
+        put_bid={row["strike"]: row.get("put_bid", 0) for row in chain["strikes"]},
+        put_ask={row["strike"]: row.get("put_ask", 0) for row in chain["strikes"]},
+        call_iv={row["strike"]: row.get("call_iv", 0) for row in chain["strikes"] if row.get("call_iv", 0) > 0},
+        put_iv={row["strike"]: row.get("put_iv", 0) for row in chain["strikes"] if row.get("put_iv", 0) > 0},
+    )
+
+    analytics_data = get_option_chain_analytics([snapshot])
+
+    pcr_data = analytics_data.get("pcr", {})
+    max_pain_data = analytics_data.get("max_pain", {})
+    iv_surface_data = analytics_data.get("iv_surface", {})
+    greeks_data = analytics_data.get("greeks_heatmap", {})
+    sr_data = calculate_support_resistance_from_oi(snapshot)
+
+    return OptionChainAnalyticsResponse(
+        underlying=snapshot.underlying,
+        spot=snapshot.spot,
+        expiry=snapshot.expiry.isoformat(),
+        pcr=PCRResponse(
+            pcr_oi=pcr_data.get("oi", 0),
+            pcr_volume=pcr_data.get("volume", 0),
+            total_call_oi=pcr_data.get("total_call_oi", 0),
+            total_put_oi=pcr_data.get("total_put_oi", 0),
+            total_call_volume=pcr_data.get("total_call_volume", 0),
+            total_put_volume=pcr_data.get("total_put_volume", 0),
+            strike_pcr=pcr_data.get("strike_pcr", {}),
+        ),
+        max_pain=MaxPainResponse(
+            max_pain_strike=max_pain_data.get("strike", 0),
+            min_pain=max_pain_data.get("min_pain", 0),
+            support_resistance=sr_data,
+        ),
+        iv_surface=IVSurfaceResponse(**iv_surface_data),
+        greeks_heatmap=GreeksHeatmapResponse(**greeks_data),
+    )
+
+
+@router.post("/backtest", response_model=OptionsBacktestResponse)
+async def options_backtest(provider: ProviderDep, request: OptionsBacktestRequest) -> OptionsBacktestResponse:
+    from app.backtest.options_engine import OptionsBacktestError, OptionsConfig, run_options_backtest
+    from app.quant.schema import InstrumentRef, OptionLeg, PositionConfig, StrategyDefinition
+
+    legs = []
+    for leg_data in request.legs:
+        legs.append(OptionLeg(
+            action=leg_data.get("action", "buy"),
+            option_type=leg_data.get("option_type", "CE"),
+            strike=leg_data.get("strike"),
+            strike_formula=leg_data.get("strike_formula", "ATM"),
+            lots=leg_data.get("lots", 1),
+            expiry_formula=leg_data.get("expiry_formula", "THIS_WEEK"),
+        ))
+
+    definition = StrategyDefinition(
+        version=1,
+        timeframe="1d",
+        instrument=InstrumentRef(symbol=request.underlying.upper(), exchange="NSE", segment="index"),
+        legs=legs,
+        entry={"logic": "ALL", "conditions": [{"left": {"kind": "constant", "value": 1}, "op": ">", "right": {"kind": "constant", "value": 0}}]},
+        position=PositionConfig(direction="both"),
+    )
+
+    from datetime import date, timedelta
+    end_date = date.today()
+    start_date = end_date - timedelta(days=request.dte_days + 30)
+    candle_list = await provider.get_historical_data(
+        symbol=request.underlying.upper(),
+        interval="1d",
+        start=datetime.combine(start_date, datetime.min.time()),
+        end=datetime.combine(end_date, datetime.max.time()),
+    )
+    if not candle_list:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No historical data available")
+
+    cfg = OptionsConfig(
+        initial_capital=request.initial_capital,
+        volatility=request.volatility,
+        lot_size=request.lot_size,
+        auto_roll=request.auto_roll,
+    )
+
+    try:
+        result = run_options_backtest(definition, candle_list, cfg)
+    except OptionsBacktestError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    leg_outs = [
+        OptionsLegPnLOut(
+            leg_index=leg.leg_index,
+            action=leg.action,
+            option_type=leg.option_type,
+            strike=leg.strike,
+            expiry=leg.expiry.isoformat(),
+            lots=leg.lots,
+            entry_price=leg.entry_price,
+            entry_date=leg.entry_date.isoformat(),
+            current_price=leg.current_price,
+            current_date=leg.current_date.isoformat(),
+            days_held=leg.days_held,
+            gross_pnl=round(leg.gross_pnl, 2),
+            costs={k: round(v, 2) for k, v in leg.costs.items()},
+            net_pnl=round(leg.net_pnl, 2),
+            exit_reason=leg.exit_reason,
+        )
+        for leg in result.legs
+    ]
+
+    return OptionsBacktestResponse(
+        legs=leg_outs,
+        daily_values=result.daily_values,
+        summary=result.summary,
+        cost_breakdown=result.cost_breakdown,
+    )

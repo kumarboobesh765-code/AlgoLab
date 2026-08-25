@@ -162,6 +162,43 @@ INDICATORS: dict[str, IndicatorSpec] = dict(
             length=ParamSpec("int", 9, ge=1, le=200),
             source=ParamSpec("str", "close", choices=SOURCES),
         ),
+        _spec(
+            "IV",
+            ("iv",),
+            "Implied volatility from option chain (requires option data)",
+            length=ParamSpec("int", 14, ge=1, le=200),
+            source=ParamSpec("str", "close", choices=SOURCES),
+        ),
+        _spec(
+            "OPTION_DELTA",
+            ("delta",),
+            "Option delta (requires option chain data)",
+            length=ParamSpec("int", 1, ge=1, le=1),
+        ),
+        _spec(
+            "OPTION_GAMMA",
+            ("gamma",),
+            "Option gamma (requires option chain data)",
+            length=ParamSpec("int", 1, ge=1, le=1),
+        ),
+        _spec(
+            "OPTION_THETA",
+            ("theta",),
+            "Option theta (requires option chain data)",
+            length=ParamSpec("int", 1, ge=1, le=1),
+        ),
+        _spec(
+            "OPTION_VEGA",
+            ("vega",),
+            "Option vega (requires option chain data)",
+            length=ParamSpec("int", 1, ge=1, le=1),
+        ),
+        _spec(
+            "OPTION_PRICE",
+            ("price",),
+            "Option theoretical price (Black-Scholes)",
+            length=ParamSpec("int", 1, ge=1, le=1),
+        ),
     )
 )
 
@@ -483,6 +520,43 @@ def _compute_roc(candles, length, source):
         base = src[i - length]
         out[i] = 100.0 * (src[i] - base) / base if base != 0 else NAN
     return {"roc": out}
+
+
+@_computer("IV")
+def _compute_iv(candles, length, source):
+    """Implied volatility - placeholder, requires option chain data.
+    Returns NaN series; actual IV comes from option chain analytics."""
+    return {"iv": [NAN] * len(candles)}
+
+
+@_computer("OPTION_DELTA")
+def _compute_option_delta(candles, length):
+    """Option delta - placeholder, requires option chain data."""
+    return {"delta": [NAN] * len(candles)}
+
+
+@_computer("OPTION_GAMMA")
+def _compute_option_gamma(candles, length):
+    """Option gamma - placeholder, requires option chain data."""
+    return {"gamma": [NAN] * len(candles)}
+
+
+@_computer("OPTION_THETA")
+def _compute_option_theta(candles, length):
+    """Option theta - placeholder, requires option chain data."""
+    return {"theta": [NAN] * len(candles)}
+
+
+@_computer("OPTION_VEGA")
+def _compute_option_vega(candles, length):
+    """Option vega - placeholder, requires option chain data."""
+    return {"vega": [NAN] * len(candles)}
+
+
+@_computer("OPTION_PRICE")
+def _compute_option_price(candles, length):
+    """Option theoretical price - placeholder, requires option chain data."""
+    return {"price": [NAN] * len(candles)}
 
 
 def compute_indicator(

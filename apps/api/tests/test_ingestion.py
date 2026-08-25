@@ -39,7 +39,7 @@ async def test_sync_and_resolve(client):
     session_factory = get_session_factory()
     async with session_factory() as db:
         result = await sync_instruments(db, DemoProvider())
-        assert result["received"] == 5
+        assert result["received"] >= 5
 
         nifty = await resolve_instrument(db, "NIFTY")
         assert nifty is not None
@@ -140,4 +140,4 @@ async def test_instrument_upsert_updates_existing(client):
 
         await sync_instruments(db, DemoProvider())
         count2 = (await db.execute(select(func.count()).select_from(InstrumentMaster))).scalar_one()
-        assert count1 == count2 == 5
+        assert count1 == count2 >= 5

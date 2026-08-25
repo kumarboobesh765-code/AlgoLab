@@ -5,6 +5,7 @@ from app.api.v1 import (
     auth,
     backtests,
     data,
+    execution,
     forward_tests,
     health,
     market,
@@ -23,6 +24,7 @@ api_router.include_router(strategies_polish.router)
 api_router.include_router(strategies.router)
 api_router.include_router(market.router)
 api_router.include_router(options.router)
+api_router.include_router(execution.router)
 api_router.include_router(data.router)
 api_router.include_router(quant.router)
 api_router.include_router(ai.router)

@@ -657,3 +657,177 @@ export interface MonteCarloResponse {
   vol_used_pct: number;
   horizon_days: number;
 }
+
+// ---- options analytics ----
+
+export interface PCRResponse {
+  pcr_oi: number;
+  pcr_volume: number;
+  total_call_oi: number;
+  total_put_oi: number;
+  total_call_volume: number;
+  total_put_volume: number;
+  strike_pcr: Record<string, number>;
+}
+
+export interface MaxPainResponse {
+  max_pain_strike: number;
+  min_pain: number;
+  support_resistance: {
+    resistance: Array<{ strike: number; oi: number; type: string }>;
+    support: Array<{ strike: number; oi: number; type: string }>;
+  };
+  pain_by_strike?: Record<string, number>;
+}
+
+export interface IVSurfaceResponse {
+  atm_iv: number;
+  skew: number;
+  kurtosis: number;
+  points?: Array<{
+    strike: number;
+    expiry: string;
+    days_to_expiry: number;
+    iv: number;
+    delta: number;
+    moneyness: number;
+  }>;
+}
+
+export interface GreeksHeatmapResponse {
+  net_delta: number;
+  net_gamma: number;
+  net_theta: number;
+  net_vega: number;
+  strike_greeks: Record<string, {
+    call_oi?: number;
+    put_oi?: number;
+    delta?: number;
+    gamma?: number;
+    theta?: number;
+    vega?: number;
+    call_delta?: number;
+    put_delta?: number;
+  }>;
+}
+
+export interface OptionChainAnalyticsResponse {
+  underlying: string;
+  spot: number;
+  expiry: string;
+  pcr: PCRResponse;
+  max_pain: MaxPainResponse;
+  iv_surface: IVSurfaceResponse;
+  greeks_heatmap: GreeksHeatmapResponse;
+  iv_rank_percentile?: {
+    iv_rank: number;
+    iv_percentile: number;
+    current_iv: number;
+    iv_52w_high: number;
+    iv_52w_low: number;
+  };
+}
+
+// ---- execution (Phase 10: broker gateway / OMS / risk) ----
+
+export interface ExecutionOrder {
+  order_id: string;
+  broker_order_id: string;
+  symbol: string;
+  exchange: string;
+  segment: string;
+  side: string;
+  order_type: string;
+  product: string;
+  quantity: number;
+  price: number;
+  trigger_price: number;
+  filled_quantity: number;
+  pending_quantity: number;
+  status: string;
+  average_price: number;
+  tag: string | null;
+  rejection_reason: string | null;
+}
+
+export interface ExecutionPosition {
+  symbol: string;
+  exchange: string;
+  segment: string;
+  product: string;
+  side: string;
+  quantity: number;
+  average_price: number;
+  last_price: number;
+  unrealized_pnl: number;
+  realized_pnl: number;
+  value: number;
+}
+
+export interface ExecutionFunds {
+  equity: number;
+  commodity: number;
+  used_margin: number;
+  available_cash: number;
+  collateral: number;
+}
+
+export interface ExecutionRiskStatus {
+  kill_switch: boolean;
+  max_order_notional: number;
+  max_position_notional: number;
+  max_orders_per_day: number;
+  orders_today: number;
+  daily_pnl: number;
+  max_daily_loss: number;
+}
+
+export interface ExecutionAlgoParent {
+  parent_id: string;
+  broker: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  algo: string;
+  total_slices: number;
+  released_slices: number;
+}
+
+export interface ExecutionAudit {
+  timestamp: string;
+  action: string;
+  detail: string;
+  broker_order_id: string;
+  user: string;
+}
+
+export interface PlaceOrderRequest {
+  broker: string;
+  symbol: string;
+  exchange: string;
+  segment: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  product?: string;
+  price?: number;
+  trigger_price?: number;
+  tag?: string;
+  is_amo?: boolean;
+}
+
+export interface AlgoOrderRequest {
+  broker: string;
+  symbol: string;
+  exchange: string;
+  segment: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  price?: number;
+  algo?: string;
+  start: string;
+  end: string;
+  slices?: number;
+  tag?: string;
+}
