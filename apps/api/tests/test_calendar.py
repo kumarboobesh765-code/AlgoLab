@@ -1,6 +1,6 @@
 """Tests for /calendar endpoints (holidays + cost calculator)."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -67,8 +67,8 @@ async def test_costs_options_sell_side_stt(client, auth_headers):
     resp = await client.post(f"{BASE}/calendar/costs", json=payload, headers=auth_headers)
     assert resp.status_code == 200
     data = resp.json()
-    # Options STT is on sell premium only: 0.1% of 50k = 50
-    assert abs(data["breakdown"]["stt"] - 50.0) < 1.0
+    # Options STT is on sell premium only: 0.15% of 50k = 75 (post-Budget-2026 rate)
+    assert abs(data["breakdown"]["stt"] - 75.0) < 1.0
 
 
 @pytest.mark.asyncio
@@ -96,19 +96,42 @@ def test_nifty_weekly_expiries_are_tuesdays():
         assert d.weekday() == 1  # Tuesday
 
 
-def test_banknifty_monthly_third_wednesday():
+def test_banknifty_monthly_last_tuesday():
+    """Since Sep 2025 NSE monthly contracts expire on the LAST Tuesday."""
     days = upcoming_expiries("BANKNIFTY", date(2026, 8, 1), count=2)
     assert len(days) == 2
-    # Third Wednesday convention
     for d in days:
-        assert d.weekday() == 2  # Wednesday
-        assert 15 <= d.day <= 21
+        assert d.weekday() == 1  # Tuesday
+        # Last Tuesday: no Tuesday remains in the month after it
+        next_tuesday = d + timedelta(days=7)
+        assert next_tuesday.month != d.month
+
+
+def test_sensex_monthly_last_thursday():
+    """BSE monthly contracts expire on the LAST Thursday."""
+    days = upcoming_expiries("BANKEX", date(2026, 8, 1), count=2)
+    for d in days:
+        assert d.weekday() == 3  # Thursday
+        next_thursday = d + timedelta(days=7)
+        assert next_thursday.month != d.month
+
+
+def test_stt_rates_date_aware_budget_2026():
+    """Futures/options STT hiked from Apr 1, 2026."""
+    from app.services.market_calendar import stt_futures_sell, stt_options_sell
+
+    pre = date(2026, 3, 31)
+    post = date(2026, 4, 1)
+    assert abs(stt_futures_sell(100_000, pre) - 20.0) < 0.01   # 0.02%
+    assert abs(stt_futures_sell(100_000, post) - 50.0) < 0.01  # 0.05%
+    assert abs(stt_options_sell(100_000, pre) - 100.0) < 0.01  # 0.10%
+    assert abs(stt_options_sell(100_000, post) - 150.0) < 0.01  # 0.15%
 
 
 def test_lot_size_validation():
-    issues = validate_order_quantity("NIFTY", 100)  # lot 75 → not a multiple
+    issues = validate_order_quantity("NIFTY", 100)  # lot 65 → not a multiple
     assert any("lot" in i.lower() for i in issues)
-    ok = validate_order_quantity("NIFTY", 150)  # 2 lots of 75
+    ok = validate_order_quantity("NIFTY", 130)  # 2 lots of 65
     assert ok == []
 
 
