@@ -8,8 +8,9 @@ reaches a broker.
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
+from app.core.config import get_settings
 from app.core.deps import CurrentUser
 from app.execution import list_brokers
 from app.execution.gateway import OrderRequest, Validity
@@ -36,6 +37,27 @@ from app.schemas.execution import (
 )
 
 router = APIRouter(prefix="/execution", tags=["execution"])
+
+
+def _require_whitelisted_ip(request: Request) -> None:
+    """SEBI framework: execution APIs reachable only from broker-whitelisted static IPs.
+
+    Disabled when EXECUTION_IP_WHITELIST is unset (local development).
+    """
+    whitelist = get_settings().execution_ip_whitelist
+    if not whitelist:
+        return
+    candidates = []
+    if request.client and request.client.host:
+        candidates.append(request.client.host)
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        candidates.append(xff.split(",")[0].strip())
+    if not any(ip in whitelist for ip in candidates if ip):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client IP is not whitelisted for execution endpoints",
+        )
 
 
 def _broker_config(broker: str) -> dict:
@@ -93,7 +115,8 @@ async def brokers() -> list[str]:
 
 
 @router.post("/orders/place", response_model=OrderOut)
-async def place_order(req: PlaceOrderRequest, user: CurrentUser) -> OrderOut:
+async def place_order(req: PlaceOrderRequest, user: CurrentUser, request: Request) -> OrderOut:
+    _require_whitelisted_ip(request)
     mgr = get_order_manager(req.broker, _broker_config(req.broker), user=user.email)
     try:
         resp = await mgr.submit_order(_to_order_request(req), strategy_tag=req.strategy_tag)
@@ -111,7 +134,8 @@ async def place_order(req: PlaceOrderRequest, user: CurrentUser) -> OrderOut:
 
 
 @router.post("/orders/algo", response_model=AlgoParentOut)
-async def place_algo(req: AlgoOrderRequest, user: CurrentUser) -> AlgoParentOut:
+async def place_algo(req: AlgoOrderRequest, user: CurrentUser, request: Request) -> AlgoParentOut:
+    _require_whitelisted_ip(request)
     mgr = get_order_manager(req.broker, _broker_config(req.broker), user=user.email)
     try:
         start = datetime.fromisoformat(req.start)
@@ -159,7 +183,9 @@ async def tick_algos(user: CurrentUser, broker: str = "mock") -> list[OrderOut]:
 
 
 @router.post("/orders/{order_id}/cancel", response_model=OrderOut)
-async def cancel_order(order_id: str, user: CurrentUser, broker: str = "mock") -> OrderOut:
+async def cancel_order(order_id: str, user: CurrentUser, broker: str = "mock", request: Request = None) -> OrderOut:
+    if request is not None:
+        _require_whitelisted_ip(request)
     mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
     await mgr.cancel_order(order_id)
     orders = await mgr.get_orders()
@@ -219,7 +245,8 @@ async def risk_status(user: CurrentUser, broker: str = "mock") -> RiskStatusOut:
 
 
 @router.post("/risk/kill", response_model=RiskStatusOut)
-async def set_kill(broker: str, engaged: bool, user: CurrentUser) -> RiskStatusOut:
+async def set_kill(broker: str, engaged: bool, user: CurrentUser, request: Request) -> RiskStatusOut:
+    _require_whitelisted_ip(request)
     mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
     mgr.set_kill_switch(engaged)
     return RiskStatusOut(**mgr.get_risk_status())
@@ -301,7 +328,8 @@ async def deactivate_algo(algo_id: str, user: CurrentUser) -> dict:
 # -- bracket / cover (OCO) orders -------------------------------------------
 
 @router.post("/orders/bracket", response_model=BracketOut)
-async def place_bracket(req: BracketOrderRequest, user: CurrentUser) -> BracketOut:
+async def place_bracket(req: BracketOrderRequest, user: CurrentUser, request: Request) -> BracketOut:
+    _require_whitelisted_ip(request)
     mgr = get_order_manager(req.broker, _broker_config(req.broker), user=user.email)
     entry = OrderRequest(
         symbol=req.symbol,
@@ -375,8 +403,9 @@ async def live_quotes(user: CurrentUser, symbols: str = "", broker: str = "mock"
 # -- strategy -> live execution deployment seam -----------------------------
 
 @router.post("/deploy", response_model=DeployOut)
-async def deploy_strategy(req: DeployRequest, user: CurrentUser) -> DeployOut:
+async def deploy_strategy(req: DeployRequest, user: CurrentUser, request: Request) -> DeployOut:
     """Register a strategy as a SEBI algo and link it to a broker (paper/live)."""
+    _require_whitelisted_ip(request)
     from app.execution.deploy import get_deployment_registry
 
     reg = get_deployment_registry()

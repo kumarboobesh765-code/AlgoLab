@@ -55,6 +55,10 @@ A professional Indian-market algorithmic trading **research platform**.
 | **Tax report** (`/tax/report` + `/tools/tax-report` UI): STCG/LTCG buckets by holding period, F&O turnover view, estimated tax, CSV export | ✅ |
 | **Background optimization runs** (`?background=true`): 202 + poll pattern so long sweeps never block the API worker | ✅ |
 | **Playwright E2E suite**: login → dashboard → strategies → backtest → optimization → tax report flows against mock mode (`npm run test:e2e`) | ✅ |
+| **SEBI retail-algo compliance** (CIR/2025/0000013): 10-OPS order-rate limiter, static-IP whitelist on execution routes, OTR monitoring in risk status, white-box disclosure on AI drafts, algo-ID tagging + kill switch | ✅ |
+| **Multi-symbol scanner API** (`POST /quant/scan`): one definition across up to 50 symbols on stored candles, ranked by signal recency | ✅ |
+| **Expired-options history** (`GET /options/expired-history`, DhanHQ v2.2): real option-premium candles for leg backtesting | ✅ |
+| **Backtest slippage** (`slippage_pct`): adverse per-side fill adjustment — entries pay more, exits receive less | ✅ |
 | **Prometheus-style metrics** (`GET /api/v1/metrics`): request counts by method/path/status + latency sums, zero dependencies | ✅ |
 | **UX polish**: toast notifications, dark/light theme toggle (persisted), mobile-responsive sidebar drawer, dashboard onboarding checklist | ✅ |
 | **Strategy sharing**: copy a shareable link (`?import=<base64url>`) that imports the strategy into another account | ✅ |

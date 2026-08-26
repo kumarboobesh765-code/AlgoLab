@@ -33,6 +33,13 @@ class DraftResponse(BaseModel):
     valid: bool
     warnings: list[str]
     errors: list[str]
+    compliance: str = (
+        "White-box draft: the full rule set is disclosed and replicable in the "
+        "definition above. Under SEBI's retail algo framework (CIR/2025/0000013), "
+        "white-box strategies can be registered with an exchange via your broker "
+        "without a Research Analyst license. Keep the logic transparent if you "
+        "deploy this to other users."
+    )
 
 
 _LLM_SYSTEM_PROMPT = """You convert trading-strategy descriptions into a strict JSON "strategy definition".

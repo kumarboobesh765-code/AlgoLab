@@ -319,6 +319,82 @@ class DhanProvider(MarketDataProvider):
             )
         return candles
 
+    async def get_expired_option_history(
+        self,
+        underlying: str,
+        strike: float,
+        option_type: str,
+        expiry: date,
+        interval: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[Candle]:
+        """Historical candles for an (optionally expired) option contract.
+
+        DhanHQ v2.2 exposes expired NSE/BSE options data through the same
+        /charts/period endpoint using the contract's security id — enables
+        options-leg backtesting without third-party data sources.
+        """
+        if interval not in INTERVAL_MAP:
+            raise ProviderError(f"Unsupported interval '{interval}' for options history")
+
+        _, by_security = await self._load_master(force=False)
+        opt = (option_type or "").strip().upper()[-1]  # tolerate CE/PE/C/P
+        want_expiry = expiry if isinstance(expiry, date) else date.fromisoformat(str(expiry))
+
+        candidates = [
+            r for r in by_security.values()
+            if r.get("segment") == "options"
+            and (r.get("underlying") or "").upper().startswith(underlying.strip().upper())
+            and r.get("option_type") == ("CE" if opt == "C" else "PE")
+            and r.get("strike") is not None and abs(float(r["strike"]) - strike) < 0.01
+            and r.get("expiry") == want_expiry
+        ]
+        if not candidates:
+            raise ProviderError(
+                f"No option contract found for {underlying} {strike}{opt} expiring {want_expiry}"
+            )
+        # Prefer the nearest exchange segment match; master may list duplicates.
+        record = sorted(candidates, key=lambda r: r["security_id"])[0]
+
+        payload = {
+            "securityId": record["security_id"],
+            "exchangeSegment": record["exchange_segment"],
+            "instrument": record["instrument_type"],
+            "expiryCode": record.get("expiry_code", 0),
+            "oi": False,
+            "interval": INTERVAL_MAP[interval],
+            "fromDate": start.date().isoformat(),
+            "toDate": end.date().isoformat(),
+        }
+        resp = await self._request("POST", "/charts/period", json=payload)
+        data = resp.json()
+
+        timestamps = data.get("timestamp") or []
+        opens = data.get("open") or []
+        highs = data.get("high") or []
+        lows = data.get("low") or []
+        closes = data.get("close") or []
+        volumes = data.get("volume") or []
+
+        candles: list[Candle] = []
+        for i, ts in enumerate(timestamps):
+            if i >= len(opens) or i >= len(closes):
+                break
+            candles.append(
+                Candle(
+                    timestamp=self._parse_timestamp(ts),
+                    instrument_id=f"{record['underlying']}{int(strike)}{opt}",
+                    open=float(opens[i]),
+                    high=float(highs[i]) if i < len(highs) else float(opens[i]),
+                    low=float(lows[i]) if i < len(lows) else float(opens[i]),
+                    close=float(closes[i]),
+                    volume=float(volumes[i]) if i < len(volumes) else 0.0,
+                    oi=None,
+                )
+            )
+        return candles
+
     # ------------------------------------------------------------ option chain
     async def get_option_chain(self, underlying: str, expiry: str | None = None) -> dict:
         symbol = underlying.strip().upper()

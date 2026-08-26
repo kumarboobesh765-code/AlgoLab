@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.core.cache import get_cache
 from app.core.config import get_settings
-from app.core.deps import ProviderDep
+from app.core.deps import CurrentUser, ProviderDep
 from app.options import lab
 from app.options.lab import OptionsLabError, ResolvedLeg
 from app.schemas.options import (
@@ -295,3 +295,71 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
         summary=result.summary,
         cost_breakdown=result.cost_breakdown,
     )
+
+
+# ---- expired options history (DhanHQ v2.2+) ----
+
+
+@router.get("/expired-history")
+async def expired_option_history(
+    provider: ProviderDep,
+    user: CurrentUser = None,
+    underlying: str = "NIFTY",
+    strike: float = 0,
+    option_type: str = "CE",
+    expiry: str = "",
+    interval: str = "5m",
+    start: str = "",
+    end: str = "",
+) -> dict:
+    """Historical premium candles for an (optionally expired) option contract.
+
+    Enables options-leg backtesting against real traded premiums instead of
+    Black-Scholes synthesis where the provider supports it.
+    """
+    from datetime import UTC, timedelta
+    from datetime import datetime as _dt
+
+    fn = getattr(provider, "get_expired_option_history", None)
+    if fn is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provider '{provider.name}' does not expose expired options history",
+        )
+    if not expiry:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="expiry (YYYY-MM-DD) is required")
+    try:
+        expiry_date = _dt.strptime(expiry, "%Y-%m-%d").date()
+        start_dt = _dt.strptime(start, "%Y-%m-%d") if start else _dt.now(UTC) - timedelta(days=30)
+        end_dt = _dt.strptime(end, "%Y-%m-%d") if end else _dt.now(UTC)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Bad date: {exc}") from exc
+    if strike <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="strike must be > 0")
+
+    candles = await fn(
+        underlying=underlying,
+        strike=strike,
+        option_type=option_type,
+        expiry=expiry_date,
+        interval=interval,
+        start=start_dt,
+        end=end_dt,
+    )
+    return {
+        "underlying": underlying.upper(),
+        "strike": strike,
+        "option_type": option_type.upper(),
+        "expiry": expiry,
+        "interval": interval,
+        "count": len(candles),
+        "is_demo": provider.is_demo,
+        "candles": [
+            {
+                "timestamp": c.timestamp.isoformat(),
+                "open": c.open, "high": c.high, "low": c.low, "close": c.close,
+                "volume": c.volume,
+            }
+            for c in candles
+        ],
+    }

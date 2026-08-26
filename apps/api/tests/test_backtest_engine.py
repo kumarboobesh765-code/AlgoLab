@@ -226,3 +226,71 @@ async def test_summary_metrics_consistency():
         pnl_sum = round(sum(t.pnl for t in result.trades), 2)
         # net pnl equals sum of trade pnls (cash accounting identity)
         assert abs(pnl_sum - s["net_pnl"]) < 0.01
+
+
+# ---- adverse slippage (2026 addition) ----
+
+
+def _zigzag_candles(n: int = 60):
+    import math
+    from datetime import datetime, timedelta
+
+    from app.marketdata.base import Candle
+
+    prices = [100 + 20 * math.sin(i / 4.0) for i in range(n)]
+    base = datetime(2026, 1, 1)
+    return [
+        Candle(
+            timestamp=base + timedelta(days=i), instrument_id="X",
+            open=prices[i], high=prices[i] + 2, low=prices[i] - 2,
+            close=prices[i], volume=0,
+        )
+        for i in range(n)
+    ]
+
+
+def _cross_definition():
+    return {
+        "version": 1, "timeframe": "1d", "instrument": {"symbol": "X"},
+        "indicators": [
+            {"id": "f", "type": "SMA", "params": {"length": 3}},
+            {"id": "s", "type": "SMA", "params": {"length": 10}},
+        ],
+        "entry": {"logic": "ALL", "conditions": [
+            {"left": {"kind": "indicator", "ref": "f"}, "op": "CROSS_ABOVE", "right": {"kind": "indicator", "ref": "s"}}]},
+        "exit": {"logic": "ALL", "conditions": [
+            {"left": {"kind": "indicator", "ref": "f"}, "op": "CROSS_BELOW", "right": {"kind": "indicator", "ref": "s"}}]},
+        "position": {"quantity_type": "fixed", "quantity": 10, "direction": "long_only"},
+    }
+
+
+def test_slippage_reduces_long_pnl_and_shifts_entries():
+    from app.backtest import BacktestConfig, run_backtest
+    from app.quant.schema import StrategyDefinition
+
+    candles = _zigzag_candles()
+    defn = StrategyDefinition.model_validate(_cross_definition())
+
+    base = run_backtest(defn, candles, BacktestConfig(initial_capital=100_000, costs_pct=0.0))
+    slipped = run_backtest(defn, candles, BacktestConfig(initial_capital=100_000, costs_pct=0.0, slippage_pct=0.5))
+
+    assert base.summary["total_trades"] > 0
+    # Same trades identified, but every fill is worse for the trader
+    assert slipped.summary["total_trades"] == base.summary["total_trades"]
+    assert slipped.summary["net_pnl"] < base.summary["net_pnl"]
+    # First long entry fills above the bar open
+    b0 = base.trades[0]
+    s0 = slipped.trades[0]
+    assert s0.entry_price > b0.entry_price
+    assert s0.exit_price < b0.exit_price
+
+
+def test_zero_slippage_matches_legacy_behavior():
+    from app.backtest import BacktestConfig, run_backtest
+    from app.quant.schema import StrategyDefinition
+
+    candles = _zigzag_candles()
+    defn = StrategyDefinition.model_validate(_cross_definition())
+    a = run_backtest(defn, candles, BacktestConfig(costs_pct=0.01))
+    b = run_backtest(defn, candles, BacktestConfig(costs_pct=0.01, slippage_pct=0.0))
+    assert a.summary == b.summary

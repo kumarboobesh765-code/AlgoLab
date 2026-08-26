@@ -11,6 +11,7 @@ class BacktestRunRequest(BaseModel):
     end: date | None = None
     initial_capital: float = Field(default=100_000.0, gt=0, le=100_000_000_000)
     costs_pct: float = Field(default=0.03, ge=0, le=5)
+    slippage_pct: float = Field(default=0.0, ge=0, le=5)
 
 
 class BacktestRunOut(BaseModel):

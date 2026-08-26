@@ -57,6 +57,15 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # SEBI retail-algo framework: broker APIs must only be reachable from
+    # static IPs whitelisted with the broker. Comma-separated; empty disables
+    # the check (development). Example: "203.0.113.7,198.51.100.42"
+    EXECUTION_IP_WHITELIST: str = ""
+
+    @property
+    def execution_ip_whitelist(self) -> list[str]:
+        return [ip.strip() for ip in self.EXECUTION_IP_WHITELIST.split(",") if ip.strip()]
+
     @property
     def is_production(self) -> bool:
         return self.APP_ENV.lower() == "production"

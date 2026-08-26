@@ -79,6 +79,7 @@ async def create_backtest(
             "end": end_dt.isoformat(),
             "initial_capital": payload.initial_capital,
             "costs_pct": payload.costs_pct,
+            "slippage_pct": payload.slippage_pct,
             "bars": len(candles),
         },
         started_at=datetime.now(UTC),
@@ -91,7 +92,11 @@ async def create_backtest(
         result = run_backtest(
             definition,
             candles,
-            BacktestConfig(initial_capital=payload.initial_capital, costs_pct=payload.costs_pct),
+            BacktestConfig(
+                initial_capital=payload.initial_capital,
+                costs_pct=payload.costs_pct,
+                slippage_pct=payload.slippage_pct,
+            ),
         )
     except BacktestError as exc:
         run.status = "failed"

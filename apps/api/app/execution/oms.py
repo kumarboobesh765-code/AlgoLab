@@ -36,6 +36,7 @@ from app.execution.gateway import (
 from app.execution.risk import RiskGuard, RiskViolation
 from app.execution.sebi import RegisteredAlgo, get_algo_registry
 from app.execution.stream import StreamManager, Tick
+from app.execution.throttle import OTRTracker, get_rate_limiter
 
 
 @dataclass
@@ -87,13 +88,16 @@ class OrderManager:
         self._brackets: dict[str, BracketParent] = {}
         self._ref_prices: dict[str, float] = {}
         self.stream = StreamManager()
+        self.limiter = get_rate_limiter()  # SEBI OPS cap, shared per process
+        self.otr = OTRTracker()
+        self._counted_fills: dict[str, int] = {}
 
     # -- audit ---------------------------------------------------------------
 
     def _log(self, action: str, detail: str, broker_order_id: str = "") -> None:
         self._audit.append(
             AuditEntry(
-                timestamp=datetime.now(),
+                timestamp=datetime.now().astimezone(),  # tz-aware; µs precision
                 action=action,
                 detail=detail,
                 broker_order_id=broker_order_id,
@@ -113,7 +117,7 @@ class OrderManager:
 
     def get_risk_status(self) -> dict:
         cfg = self.risk.config
-        return {
+        status = {
             "kill_switch": cfg.kill_switch,
             "max_order_notional": cfg.max_order_notional,
             "max_position_notional": cfg.max_position_notional,
@@ -121,7 +125,19 @@ class OrderManager:
             "orders_today": self._orders_today,
             "daily_pnl": round(self._daily_pnl, 2),
             "max_daily_loss": cfg.max_daily_loss,
+            # SEBI compliance telemetry
+            "ops_limit": self.limiter.max_ops,
+            "ops_current": self.limiter.current_rate(self.user),
+            "orders_placed": self.otr.orders_placed,
+            "trades_executed": self.otr.trades_executed,
+            "order_to_trade_ratio": self.otr.ratio,
         }
+        if self.otr.is_excessive():
+            status["otr_warning"] = (
+                f"Order-to-trade ratio {self.otr.ratio} exceeds "
+                f"{self.otr.warn_threshold} — exchanges may flag this account"
+            )
+        return status
 
     # -- order submission ----------------------------------------------------
 
@@ -156,6 +172,15 @@ class OrderManager:
             self._log("ORDER_REJECTED_RISK", "; ".join(violations))
             raise RiskViolation(violations)
 
+        # SEBI OPS cap: refuse submissions beyond the orders-per-second limit.
+        if not self.limiter.allow(self.user):
+            msg = (
+                f"Order rate exceeds SEBI limit of {self.limiter.max_ops} "
+                f"orders/second — slow down"
+            )
+            self._log("ORDER_REJECTED_OPS", msg)
+            raise RiskViolation([msg])
+
         effective_tag = strategy_tag or request.tag
         if request.algo_id:
             effective_tag = f"{effective_tag or ''}|ALGO:{request.algo_id}".strip("|")
@@ -186,6 +211,7 @@ class OrderManager:
 
         if resp.status not in (OrderStatus.REJECTED,):
             self._orders_today += 1
+            self.otr.record_order()
             self._log("ORDER_PLACED", f"{req.side.value} {req.quantity} {req.symbol}", resp.broker_order_id)
         return resp
 
@@ -385,6 +411,12 @@ class OrderManager:
         orders = await self.gateway.get_orders()
         for o in orders:
             self._orders[o.broker_order_id] = o
+            # Count executions for OTR telemetry (idempotent per fill snapshot)
+            if o.filled_quantity > 0:
+                seen = self._counted_fills.get(o.broker_order_id, 0)
+                if o.filled_quantity > seen:
+                    self.otr.record_trade(o.filled_quantity - seen)
+                    self._counted_fills[o.broker_order_id] = o.filled_quantity
         return orders
 
     async def get_orders(self) -> list[Order]:

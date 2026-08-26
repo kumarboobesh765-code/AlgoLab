@@ -1,14 +1,16 @@
-"""Quant engine endpoints: definition validation and signal preview."""
+"""Quant engine endpoints: definition validation, signal preview, multi-symbol scan."""
 
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from app.core.deps import CurrentUser, DbSession, ProviderDep
 from app.marketdata.base import ProviderError
 from app.quant.engine import count_signals, evaluate_definition
 from app.quant.indicators import INDICATORS
 from app.quant.schema import TIMEFRAMES, StrategyDefinition, validate_definition
+from app.services.candles import load_candles
 from app.services.ingest import resolve_instrument
 
 router = APIRouter(prefix="/quant", tags=["quant"])
@@ -112,3 +114,85 @@ async def preview(
         "last_bar_exit_signal": bool(result.exit_signals[last_index]),
         "indicator_tail": tail,
     }
+
+# ---- multi-symbol scanner ----
+
+
+class ScanRequest(BaseModel):
+    symbols: list[str] = Field(min_length=1, max_length=50)
+    definition: dict
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+class ScanRow(BaseModel):
+    symbol: str
+    bars_evaluated: int
+    entry_signals: int
+    exit_signals: int
+    last_bar_entry_signal: bool
+    last_close: float | None
+
+
+class ScanResponse(BaseModel):
+    scanned: int
+    timeframe: str
+    rows: list[ScanRow]
+    errors: dict[str, str]
+
+
+@router.post("/scan", response_model=ScanResponse)
+async def scan_symbols(
+    payload: ScanRequest,
+    db: DbSession,
+    user: CurrentUser,
+) -> ScanResponse:
+    """Run one definition across many stored-candle symbols, ranked by recency of signal.
+
+    Uses only locally stored candles (reproducibility policy) — sync/ingest first.
+    """
+    errors, _ = validate_definition(payload.definition)
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"message": "Invalid strategy definition", "errors": errors},
+        )
+    parsed = StrategyDefinition.model_validate(payload.definition)
+
+    end = payload.end or datetime.now(UTC)
+    start = payload.start or end - timedelta(days=30)
+
+    seen = set()
+    symbols = [s.upper().strip() for s in payload.symbols if s.strip()]
+    deduped = [s for s in symbols if not (s in seen or seen.add(s))]
+
+    rows: list[ScanRow] = []
+    symbol_errors: dict[str, str] = {}
+
+    for symbol in deduped[:50]:
+        try:
+            candles = await load_candles(db, symbol=symbol, interval=parsed.timeframe, start=start, end=end)
+            if len(candles) < 5:
+                symbol_errors[symbol] = f"no stored candles ({len(candles)})"
+                continue
+            result = evaluate_definition(parsed, candles)
+            entries, exits = count_signals(result)
+            rows.append(ScanRow(
+                symbol=symbol,
+                bars_evaluated=len(candles),
+                entry_signals=entries,
+                exit_signals=exits,
+                last_bar_entry_signal=bool(result.entry_signals[-1]),
+                last_close=float(candles[-1].close),
+            ))
+        except Exception as exc:  # noqa: BLE001 - per-symbol isolation
+            symbol_errors[symbol] = str(exc)[:200]
+
+    # Fresh entries on the last bar first, then by total signal count.
+    rows.sort(key=lambda r: (not r.last_bar_entry_signal, -r.entry_signals))
+    return ScanResponse(
+        scanned=len(rows),
+        timeframe=parsed.timeframe,
+        rows=rows,
+        errors=symbol_errors,
+    )

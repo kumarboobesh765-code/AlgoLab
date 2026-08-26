@@ -111,6 +111,13 @@ class RiskStatusOut(BaseModel):
     orders_today: int
     daily_pnl: float
     max_daily_loss: float
+    # SEBI retail-algo compliance telemetry
+    ops_limit: int = 10
+    ops_current: int = 0
+    orders_placed: int = 0
+    trades_executed: int = 0
+    order_to_trade_ratio: float | None = None
+    otr_warning: str | None = None
 
 
 class AlgoParentOut(BaseModel):

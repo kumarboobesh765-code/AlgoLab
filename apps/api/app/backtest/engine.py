@@ -59,6 +59,15 @@ class BacktestError(ValueError):
 class BacktestConfig:
     initial_capital: float = 100_000.0
     costs_pct: float = 0.03  # per side, % of traded value
+    slippage_pct: float = 0.0  # adverse fill slippage per side, % of price
+
+
+def _slip(price: float, buys: bool, pct: float) -> float:
+    """Adverse slippage: pay more when buying, receive less when selling."""
+    if pct <= 0:
+        return price
+    s = pct / 100.0
+    return price * (1 + s) if buys else price * (1 - s)
 
 
 @dataclass(slots=True)
@@ -160,6 +169,9 @@ def run_backtest(
     def close_position(index: int, price: float, reason: str) -> None:
         nonlocal cash, position, total_costs, cost_breakdown
         assert position is not None
+        # Exit fill slips adversely: closing a long means selling (receive less),
+        # closing a short means buying (pay more).
+        price = _slip(price, buys=position.dir_sign == -1, pct=cfg.slippage_pct)
         gross = (price - position.entry_price) * position.quantity * position.dir_sign
         exit_costs = _leg_costs(price, position.quantity, is_sell=True)
         _acc(cost_breakdown, exit_costs)
@@ -188,7 +200,8 @@ def run_backtest(
 
     def open_position(index: int, dir_sign: int) -> None:
         nonlocal cash, position, total_costs, raw_costs
-        price = candles[index].open
+        # Entry fill slips adversely: buys fill higher, shorts fill lower.
+        price = _slip(candles[index].open, buys=dir_sign == 1, pct=cfg.slippage_pct)
         qty = size_quantity(price)
         if qty <= 0:
             return
