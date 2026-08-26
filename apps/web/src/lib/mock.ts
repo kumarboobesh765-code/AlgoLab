@@ -805,6 +805,9 @@ let paperAccounts: PaperAccount[] = mockPaperAccounts();
 let forwardTests: ForwardTestRun[] = mockForwardTests();
 const optRuns = mockOptimizations();
 
+// automation state (module-level so run-once mutates it across calls)
+const autoStates: { strategy_id: string; broker: string; mode: string; runs: number; orders_placed: number; direction: string | null; last_message: string; last_run_at: string | null }[] = [];
+
 function buildRun(strategyId: string, cfg: Record<string, unknown>, seedBias: string): BacktestRun {
   const results = genBacktestResults(strategyId, cfg);
   const now = isoDate(new Date());
