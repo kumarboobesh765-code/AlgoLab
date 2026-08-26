@@ -75,6 +75,32 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await resp.json()) as T;
 }
 
+// ---- strategy sharing (base64 URL fragment) ----
+
+export function encodeStrategyForSharing(definition: Record<string, unknown>, name: string): string {
+  const payload = JSON.stringify({ definition, name, exportedAt: new Date().toISOString(), version: 1 });
+  const base64 = btoa(payload);
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+export function decodeStrategyFromSharing(encoded: string): { definition: Record<string, unknown>; name: string } | null {
+  try {
+    const padded = encoded.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((encoded.length % 4) || 4);
+    const payload = JSON.parse(atob(padded));
+    if (payload.definition && typeof payload.name === "string") {
+      return { definition: payload.definition, name: payload.name };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function getStrategyShareUrl(encoded: string): string {
+  if (typeof window === "undefined") return "";
+  return `${window.location.origin}/strategies/new?import=${encoded}`;
+}
+
 // ---- shared API types ----
 
 export interface Health {
@@ -830,4 +856,97 @@ export interface AlgoOrderRequest {
   end: string;
   slices?: number;
   tag?: string;
+}
+
+export interface AlgoRegisterRequest {
+  name: string;
+  segment: string;
+  exchange: string;
+  strategy_id?: string | null;
+}
+
+export interface AlgoRegisterOut {
+  algo_id: string;
+  name: string;
+  segment: string;
+  exchange: string;
+  strategy_id: string | null;
+  active: boolean;
+}
+
+export interface RegisteredAlgoOut {
+  algo_id: string;
+  name: string;
+  segment: string;
+  exchange: string;
+  strategy_id: string | null;
+  active: boolean;
+  registered_at: string;
+}
+
+export interface BracketOrderRequest {
+  broker: string;
+  symbol: string;
+  exchange: string;
+  segment: string;
+  side: string;
+  order_type: string;
+  quantity: number;
+  target_price: number;
+  stop_loss_price: number;
+  trailing_stop?: number | null;
+  tag?: string;
+  algo_id?: string | null;
+}
+
+export interface BracketOut {
+  bracket_id: string;
+  entry_order_id: string;
+  target_price: number;
+  stop_loss_price: number;
+  armed: boolean;
+  done: boolean;
+}
+
+export interface TickOut {
+  symbol: string;
+  last_price: number;
+  bid: number;
+  ask: number;
+  volume: number;
+  oi: number;
+  change: number;
+  change_pct: number;
+}
+
+export interface DeployRequest {
+  strategy_id: string;
+  broker: string;
+  mode: "paper" | "live";
+  name: string;
+  segment?: string;
+  exchange?: string;
+}
+
+export interface DeployOut {
+  deployment_id: string;
+  strategy_id: string;
+  algo_id: string;
+  broker: string;
+  mode: string;
+  name: string;
+  active: boolean;
+}
+
+export interface DeploymentOut {
+  deployment_id: string;
+  strategy_id: string;
+  algo_id: string;
+  broker: string;
+  mode: string;
+  name: string;
+  segment: string;
+  exchange: string;
+  active: boolean;
+  created_at: string;
 }

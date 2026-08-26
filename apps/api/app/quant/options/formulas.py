@@ -8,11 +8,11 @@ Supports dynamic position sizing and strike selection based on:
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 
-class ExpiryType(str, Enum):
+class ExpiryType(StrEnum):
     """Expiry selection formulas."""
 
     THIS_WEEK = "THIS_WEEK"

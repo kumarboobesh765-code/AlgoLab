@@ -18,12 +18,21 @@ from app.execution.risk import RiskViolation
 from app.schemas.execution import (
     AlgoOrderRequest,
     AlgoParentOut,
+    AlgoRegisterOut,
+    AlgoRegisterRequest,
     AuditOut,
+    BracketOrderRequest,
+    BracketOut,
+    DeploymentOut,
+    DeployOut,
+    DeployRequest,
     FundsOut,
     OrderOut,
     PlaceOrderRequest,
     PositionOut,
+    RegisteredAlgoOut,
     RiskStatusOut,
+    TickOut,
 )
 
 router = APIRouter(prefix="/execution", tags=["execution"])
@@ -246,4 +255,169 @@ async def audit_trail(user: CurrentUser, broker: str = "mock") -> list[AuditOut]
             user=e.user,
         )
         for e in mgr.audit_trail
+    ]
+
+
+# -- SEBI algo registration --------------------------------------------------
+
+@router.post("/algo/register", response_model=AlgoRegisterOut)
+async def register_algo(req: AlgoRegisterRequest, user: CurrentUser) -> AlgoRegisterOut:
+    mgr = get_order_manager("mock", {}, user=user.email)
+    algo = mgr.register_algo(req.name, req.segment.value, req.exchange.value, req.strategy_id)
+    return AlgoRegisterOut(
+        algo_id=algo.algo_id,
+        name=algo.name,
+        segment=algo.segment,
+        exchange=algo.exchange,
+        strategy_id=algo.strategy_id,
+        active=algo.active,
+    )
+
+
+@router.get("/algo/registered", response_model=list[RegisteredAlgoOut])
+async def registered_algos(user: CurrentUser) -> list[RegisteredAlgoOut]:
+    mgr = get_order_manager("mock", {}, user=user.email)
+    return [
+        RegisteredAlgoOut(
+            algo_id=a.algo_id,
+            name=a.name,
+            segment=a.segment,
+            exchange=a.exchange,
+            strategy_id=a.strategy_id,
+            active=a.active,
+            registered_at=a.registered_at.isoformat(),
+        )
+        for a in mgr.list_registered_algos()
+    ]
+
+
+@router.post("/algo/deactivate", response_model=dict)
+async def deactivate_algo(algo_id: str, user: CurrentUser) -> dict:
+    mgr = get_order_manager("mock", {}, user=user.email)
+    ok = mgr.deactivate_algo(algo_id)
+    return {"algo_id": algo_id, "deactivated": ok}
+
+
+# -- bracket / cover (OCO) orders -------------------------------------------
+
+@router.post("/orders/bracket", response_model=BracketOut)
+async def place_bracket(req: BracketOrderRequest, user: CurrentUser) -> BracketOut:
+    mgr = get_order_manager(req.broker, _broker_config(req.broker), user=user.email)
+    entry = OrderRequest(
+        symbol=req.symbol,
+        exchange=req.exchange,
+        segment=req.segment,
+        side=req.side,
+        order_type=req.order_type,
+        quantity=req.quantity,
+        product=req.product,
+        price=req.price,
+        trigger_price=req.trigger_price,
+        tag=req.tag,
+        algo_id=req.algo_id,
+    )
+    try:
+        parent = await mgr.submit_bracket_order(entry, req.target_price, req.stop_loss_price, req.trailing_stop)
+    except RiskViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"risk_violations": exc.violations},
+        ) from exc
+    return BracketOut(
+        bracket_id=parent.parent_id,
+        entry_order_id=parent.entry_order_id,
+        target_price=req.target_price,
+        stop_loss_price=req.stop_loss_price,
+        armed=parent.armed,
+        done=parent.done,
+    )
+
+
+@router.post("/orders/process-fills", response_model=list[OrderOut])
+async def process_fills(user: CurrentUser, broker: str = "mock") -> list[OrderOut]:
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    resps = await mgr.process_fills()
+    orders = await mgr.get_orders()
+    by_id = {o.broker_order_id: o for o in orders}
+    out = []
+    for r in resps:
+        o = by_id.get(r.broker_order_id)
+        if o:
+            out.append(_order_out(o))
+    return out
+
+
+@router.get("/brackets", response_model=list[BracketOut])
+async def list_brackets(user: CurrentUser, broker: str = "mock") -> list[BracketOut]:
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    out = []
+    for b in mgr.list_brackets():
+        out.append(BracketOut(
+            bracket_id=b.parent_id,
+            entry_order_id=b.entry_order_id,
+            target_price=b.target.price,
+            stop_loss_price=b.stop.trigger_price,
+            armed=b.armed,
+            done=b.done,
+        ))
+    return out
+
+
+@router.get("/quotes", response_model=list[TickOut])
+async def live_quotes(user: CurrentUser, symbols: str = "", broker: str = "mock") -> list[TickOut]:
+    """Fetch latest quotes for a comma-separated watchlist and publish to the stream."""
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    ticks = await mgr.refresh_quotes(syms)
+    return [TickOut(**t.__dict__) for t in ticks]
+
+
+# -- strategy -> live execution deployment seam -----------------------------
+
+@router.post("/deploy", response_model=DeployOut)
+async def deploy_strategy(req: DeployRequest, user: CurrentUser) -> DeployOut:
+    """Register a strategy as a SEBI algo and link it to a broker (paper/live)."""
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    dep = reg.deploy(
+        strategy_id=req.strategy_id,
+        broker=req.broker,
+        mode=req.mode,
+        name=req.name,
+        segment=req.segment,
+        exchange=req.exchange,
+    )
+    mgr = get_order_manager(req.broker, _broker_config(req.broker), user=user.email)
+    mgr._log("DEPLOY", f"{req.mode} {req.strategy_id} -> {dep.algo_id} ({req.broker})", dep.algo_id)
+    return DeployOut(
+        deployment_id=dep.deployment_id,
+        strategy_id=dep.strategy_id,
+        algo_id=dep.algo_id,
+        broker=dep.broker,
+        mode=dep.mode,
+        name=dep.name,
+        active=dep.active,
+    )
+
+
+@router.get("/deployments", response_model=list[DeploymentOut])
+async def list_deployments(user: CurrentUser) -> list[DeploymentOut]:
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    return [
+        DeploymentOut(
+            deployment_id=d.deployment_id,
+            strategy_id=d.strategy_id,
+            algo_id=d.algo_id,
+            broker=d.broker,
+            mode=d.mode,
+            name=d.name,
+            segment=d.segment,
+            exchange=d.exchange,
+            active=d.active,
+            created_at=d.created_at.isoformat(),
+        )
+        for d in reg.list_deployments()
     ]

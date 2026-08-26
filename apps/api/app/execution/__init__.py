@@ -1,5 +1,9 @@
 """Execution gateway package."""
 
+from app.execution.angelone import AngelOneGateway
+from app.execution.dhan import DhanGateway
+from app.execution.fivepaisa import FivePaisaGateway
+from app.execution.fyers import FyersGateway
 from app.execution.gateway import (
     AuthenticationError,
     BrokerError,
@@ -25,12 +29,20 @@ from app.execution.gateway import (
     Trade,
     Validity,
 )
+from app.execution.icici import IciciGateway
+from app.execution.upstox import UpstoxGateway
 from app.execution.zerodha import ZerodhaGateway
 
 __all__ = [
     "BrokerGateway",
     "MockGateway",
     "ZerodhaGateway",
+    "UpstoxGateway",
+    "AngelOneGateway",
+    "DhanGateway",
+    "FyersGateway",
+    "IciciGateway",
+    "FivePaisaGateway",
     "Instrument",
     "OrderRequest",
     "OrderResponse",
@@ -58,6 +70,12 @@ __all__ = [
 _BROKER_REGISTRY: dict[str, type[BrokerGateway]] = {
     "mock": MockGateway,
     "zerodha": ZerodhaGateway,
+    "upstox": UpstoxGateway,
+    "angelone": AngelOneGateway,
+    "dhan": DhanGateway,
+    "fyers": FyersGateway,
+    "icici": IciciGateway,
+    "5paisa": FivePaisaGateway,
 }
 
 

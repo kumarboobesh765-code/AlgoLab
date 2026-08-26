@@ -5,6 +5,174 @@
   --font-mono: var(--font-geist-mono);
 }
 
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}
+
+html.dark body {
+  background: #0b1220;
+  color: #e2e8f0;
+}
+
+html.dark .bg-white\/90 {
+  background: #1e293b/90;
+}
+
+html.dark .border-slate-200 {
+  border-color: #334155;
+}
+
+html.dark .text-slate-800 {
+  color: #f1f5f9;
+}
+
+html.dark .text-slate-600 {
+  color: #94a3b8;
+}
+
+html.dark .bg-slate-100 {
+  background: #334155;
+}
+
+html.dark .bg-slate-50 {
+  background: #1e293b;
+}
+
+html.dark .bg-blue-50 {
+  background: #1e3a5f;
+}
+
+html.dark .bg-green-50 {
+  background: #14532d;
+}
+
+html.dark .bg-red-50 {
+  background: #7f1d1d;
+}
+
+html.dark .bg-amber-50 {
+  background: #78350f;
+}
+
+html.dark .border-blue-200 {
+  border-color: #1e3a5f;
+}
+
+html.dark .border-green-200 {
+  border-color: #14532d;
+}
+
+html.dark .border-red-200 {
+  border-color: #7f1d1d;
+}
+
+html.dark .border-amber-200 {
+  border-color: #78350f;
+}
+
+html.dark .text-slate-400 {
+  color: #64748b;
+}
+
+html.dark .hover\:bg-slate-50:hover {
+  background: #334155;
+}
+
+html.dark .hover\:bg-slate-100:hover {
+  background: #475569;
+}
+
+html.dark .ring-slate-200 {
+  --tw-ring-color: #334155;
+}
+
+html.dark .ring-inset {
+  --tw-ring-inset: inset;
+}
+
+html.dark .bg-white {
+  background: #1e293b;
+}
+
+html.dark .text-slate-900 {
+  color: #f8fafc;
+}
+
+html.dark .text-slate-700 {
+  color: #e2e8f0;
+}
+
+html.dark .bg-slate-800 {
+  background: #1e293b;
+}
+
+html.dark .text-slate-300 {
+  color: #cbd5e1;
+}
+
+html.dark .border-slate-700 {
+  border-color: #334155;
+}
+
+html.dark .ring-slate-700 {
+  --tw-ring-color: #334155;
+}
+
+html.dark .bg-slate-700\/60 {
+  background: #334155/60;
+}
+
+html.dark .text-slate-500 {
+  color: #64748b;
+}
+
+html.dark .text-emerald-400 {
+  color: #34d399;
+}
+
+html.dark .bg-emerald-500\/10 {
+  background: #10b981/10;
+}
+
+html.dark .ring-emerald-500\/20 {
+  --tw-ring-color: #10b981/20;
+}
+
+html.dark .bg-blue-600\/15 {
+  background: #2563eb/15;
+}
+
+html.dark .text-white {
+  color: #fff;
+}
+
+html.dark .ring-blue-500\/30 {
+  --tw-ring-color: #3b82f6/30;
+}
+
+html.dark .bg-slate-600 {
+  background: #475569;
+}
+
+html.dark .group-hover\:bg-slate-500:hover {
+  background: #64748b;
+}
+
+html.dark .bg-slate-900 {
+  background: #0f172a;
+}
+
 body {
   background: #f5f7fa;
   color: #0f172a;

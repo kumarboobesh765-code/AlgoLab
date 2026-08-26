@@ -693,7 +693,7 @@ function mockAiDraft(prompt: string): AiDraftResponse {
   return {
     source: "rules",
     valid: true,
-    warnings: ["Mock AI used rule-based fallback (no LLM configured)."],
+    warnings: [`Mock AI used rule-based fallback for "${prompt.slice(0, 60)}" (no LLM configured).`],
     errors: [],
     definition: {
       version: 1,
@@ -1086,7 +1086,6 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
   }
   if (pathOnly === "/data/history/ingest" && method === "POST") {
     const body = JSON.parse((init.body as string) ?? "{}");
-    const r = rnd("ingest" + JSON.stringify(body));
     const res: IngestResult = { symbol: body.symbol ?? "NIFTY", interval: body.interval ?? "5m", start: body.start ?? daysAgo(30), end: body.end ?? daysAgo(1), fetched: 1200, inserted_or_updated: 1180, duplicates_in_batch: 20, issues: [], coverage: { expected_bars: 1200, actual_unique_bars: 1180, missing_bars: 20, missing_pct: 1.7, status: "warning" } };
     return ok(res);
   }

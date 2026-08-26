@@ -4,6 +4,7 @@ from app.api.v1 import (
     ai,
     auth,
     backtests,
+    calendar,
     data,
     execution,
     forward_tests,
@@ -32,3 +33,4 @@ api_router.include_router(backtests.router)
 api_router.include_router(paper.router)
 api_router.include_router(forward_tests.router)
 api_router.include_router(optimizations.router)
+api_router.include_router(calendar.router)

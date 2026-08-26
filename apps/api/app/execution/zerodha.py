@@ -8,6 +8,7 @@ Authentication: the adapter expects an ``access_token`` in config (obtained
 out-of-band via the Kite login flow). ``connect()`` validates the token.
 """
 
+import json
 from datetime import datetime
 
 import httpx
@@ -301,7 +302,6 @@ class ZerodhaGateway(BrokerGateway):
             data["trigger_price"] = trigger_price
         if order_type is not None:
             data["order_type"] = _ORDER_TYPE_INV.get(order_type, "LIMIT")
-        otype = _ORDER_TYPE_INV.get(order_type, "LIMIT") if order_type else "LIMIT"
         resp = await self._put(f"/orders/{variety}/{order_id}", data)
         return OrderResponse(
             order_id=str(order_id),
@@ -386,3 +386,52 @@ class ZerodhaGateway(BrokerGateway):
 
     async def get_option_chain(self, underlying: str, expiry: str | None = None) -> dict:
         raise NotImplementedError("Use the market-data provider for option chains; broker chains are not normalised")
+
+    # -- WebSocket live streaming --------------------------------------------
+
+    async def subscribe_ticks(self, instruments: list[Instrument], callback) -> bool:
+        """Stream live ticks via Kite Ticker. Requires the `websockets` package."""
+        try:
+            import websockets
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("websockets package required for live streaming") from exc
+        token = f"{self.api_key}:{self.access_token}"
+        url = f"wss://ws.kite.trade/1.0?access_token={token}"
+        tokens = [int(i.token) for i in instruments if i.token and i.token.isdigit()]
+        async with websockets.connect(url) as ws:
+            if tokens:
+                await ws.send(json.dumps({"a": "subscribe", "v": tokens}))
+            async for raw in ws:
+                tick = _parse_kite_message(raw)
+                if tick:
+                    await callback(tick)
+        return True
+
+    async def subscribe_order_updates(self, callback) -> bool:
+        """Stream order updates via Kite Ticker (postback/WebSocket)."""
+        try:
+            import websockets
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError("websockets package required for live streaming") from exc
+        token = f"{self.api_key}:{self.access_token}"
+        url = f"wss://ws.kite.trade/1.0?access_token={token}&subscribe_order_updates=true"
+        async with websockets.connect(url) as ws:
+            async for raw in ws:
+                try:
+                    payload = json.loads(raw)
+                except Exception:
+                    continue
+                await callback(payload)
+        return True
+
+
+def _parse_kite_message(raw) -> object | None:
+    """Best-effort parser for Kite Ticker frames (JSON fallback)."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        # Kite sends packed binary; without the SDK we skip non-JSON frames.
+        return None
+    if isinstance(data, dict) and "last_price" in data:
+        return data
+    return None

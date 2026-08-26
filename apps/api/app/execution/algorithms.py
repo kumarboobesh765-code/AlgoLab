@@ -16,12 +16,12 @@ import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 
 from app.execution.gateway import OrderRequest, OrderSide, OrderType
 
 
-class ExecutionAlgo(str, Enum):
+class ExecutionAlgo(StrEnum):
     TWAP = "TWAP"
     VWAP = "VWAP"
     TRANCHE = "TRANCHE"

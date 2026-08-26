@@ -157,6 +157,49 @@ async def test_oms_audit_trail(manager):
     assert any(e.action == "ORDER_PLACED" for e in trail)
 
 
+# -- SEBI algo registration --------------------------------------------------
+
+async def test_sebi_register_and_list(manager):
+    algo = manager.register_algo("My Strategy", "EQUITY", "NSE", strategy_id="s-1")
+    assert algo.algo_id.startswith("ALGO-")
+    assert any(a.algo_id == algo.algo_id for a in manager.list_registered_algos())
+    assert manager.deactivate_algo(algo.algo_id) is True
+
+
+async def test_oms_algo_id_tags_order(manager):
+    algo = manager.register_algo("Tagged", "EQUITY", "NSE")
+    req = _req(qty=5, price=100, symbol="RELIANCE")
+    req = OrderRequest(**{**req.__dict__, "algo_id": algo.algo_id})
+    await manager.submit_order(req)
+    orders = await manager.get_orders()
+    assert any(o.tag and algo.algo_id in o.tag for o in orders)
+
+
+# -- Bracket / cover (OCO) ---------------------------------------------------
+
+async def test_oms_bracket_order_arms_on_fill(manager):
+    entry = OrderRequest(
+        symbol="NIFTY",
+        exchange=Exchange.NSE,
+        segment=Segment.EQUITY,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=10,
+        product=ProductType.MIS,
+    )
+    parent = await manager.submit_bracket_order(entry, target_price=21000, stop_loss_price=20500)
+    # Only the entry is placed initially
+    orders = await manager.get_orders()
+    assert len(orders) == 1
+    # On fill, target + stop loss are released
+    placed = await manager.process_fills()
+    assert len(placed) == 2
+    orders = await manager.get_orders()
+    assert len(orders) == 3
+    assert parent.done is True
+    assert any(e.action == "BRACKET_ARMED" for e in manager.audit_trail)
+
+
 # -- API ---------------------------------------------------------------------
 
 async def test_list_brokers(client):
@@ -238,3 +281,105 @@ async def test_api_algo_and_tick(client, auth_headers):
     assert tick.status_code == 200
     # Schedule dates are in the past relative to "now", so all 3 slices release.
     assert len(tick.json()) == 3
+
+
+async def test_api_sebi_register_and_list(client, auth_headers):
+    reset_managers()
+    reg = await client.post(
+        "/api/v1/execution/algo/register",
+        json={"name": "Test Algo", "segment": "EQUITY", "exchange": "NSE", "strategy_id": "s-9"},
+        headers=auth_headers,
+    )
+    assert reg.status_code == 200, reg.text
+    algo_id = reg.json()["algo_id"]
+    assert algo_id.startswith("ALGO-")
+    listed = await client.get("/api/v1/execution/algo/registered", headers=auth_headers)
+    assert listed.status_code == 200
+    assert any(a["algo_id"] == algo_id for a in listed.json())
+
+
+async def test_api_bracket_and_process(client, auth_headers):
+    reset_managers()
+    payload = {
+        "broker": "mock",
+        "symbol": "NIFTY",
+        "exchange": "NSE",
+        "segment": "EQUITY",
+        "side": "BUY",
+        "order_type": "MARKET",
+        "quantity": 10,
+        "target_price": 21000,
+        "stop_loss_price": 20500,
+    }
+    br = await client.post("/api/v1/execution/orders/bracket", json=payload, headers=auth_headers)
+    assert br.status_code == 200, br.text
+    assert br.json()["entry_order_id"]
+    # Only entry placed so far
+    orders = await client.get("/api/v1/execution/orders?broker=mock", headers=auth_headers)
+    assert len(orders.json()) == 1
+    # Process fills -> target + stop released
+    fills = await client.post("/api/v1/execution/orders/process-fills?broker=mock", headers=auth_headers)
+    assert fills.status_code == 200
+    assert len(fills.json()) == 2
+    brackets = await client.get("/api/v1/execution/brackets?broker=mock", headers=auth_headers)
+    assert brackets.json()[0]["done"] is True
+
+
+async def test_brokers_includes_upstox(client):
+    resp = await client.get("/api/v1/execution/brokers")
+    assert resp.status_code == 200
+    assert "upstox" in resp.json()
+
+
+async def test_all_brokers_registered(client):
+    resp = await client.get("/api/v1/execution/brokers")
+    assert resp.status_code == 200
+    for b in ["mock", "zerodha", "upstox", "angelone", "dhan", "fyers", "icici", "5paisa"]:
+        assert b in resp.json()
+
+
+async def test_oms_refresh_quotes(manager):
+    ticks = await manager.refresh_quotes(["NIFTY", "BANKNIFTY"])
+    assert len(ticks) == 2
+    assert all(t.last_price == 22000.0 for t in ticks)
+    assert len(manager.latest_quotes()) == 2
+
+
+async def test_api_quotes_endpoint(client, auth_headers):
+    reset_managers()
+    resp = await client.get("/api/v1/execution/quotes?broker=mock&symbols=NIFTY,BANKNIFTY", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 2
+    assert body[0]["symbol"] == "NIFTY"
+    assert body[0]["last_price"] == 22000.0
+
+
+async def test_deploy_strategy_seam():
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    dep = reg.deploy("strat-123", "zerodha", "paper", "My Live Strat")
+    assert dep.algo_id.startswith("ALGO-")
+    assert dep.strategy_id == "strat-123"
+    assert dep.broker == "zerodha"
+    # algo registered in SEBI registry
+    from app.execution.sebi import get_algo_registry
+    assert get_algo_registry().get(dep.algo_id) is not None
+    assert len(reg.for_strategy("strat-123")) == 1
+
+
+async def test_api_deploy_and_list(client, auth_headers):
+    reset_managers()
+    resp = await client.post(
+        "/api/v1/execution/deploy",
+        json={"strategy_id": "s-42", "broker": "zerodha", "mode": "paper", "name": "Deploy Test"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    dep = resp.json()
+    assert dep["algo_id"].startswith("ALGO-")
+    assert dep["strategy_id"] == "s-42"
+    listed = await client.get("/api/v1/execution/deployments", headers=auth_headers)
+    assert listed.status_code == 200
+    assert any(d["deployment_id"] == dep["deployment_id"] for d in listed.json())

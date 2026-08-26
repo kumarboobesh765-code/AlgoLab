@@ -7,6 +7,9 @@ import {
   api,
   type Strategy,
   type StrategyExportPayload,
+  encodeStrategyForSharing,
+  decodeStrategyFromSharing,
+  getStrategyShareUrl,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { STRATEGY_EDIT_KEY, TEMPLATE_HANDOFF_KEY, TEMPLATE_HANDOFF_NAME } from "@/lib/builders";
@@ -53,6 +56,29 @@ function StrategiesContent() {
   const [showPicker, setShowPicker] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Import from a shared URL fragment (?import=<base64url>)
+  const importedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const encoded = searchParams.get("import");
+    if (!encoded || !user || importedRef.current === encoded) return;
+    importedRef.current = encoded;
+    const decoded = decodeStrategyFromSharing(encoded);
+    if (!decoded) return;
+    api("/strategies/import", {
+      method: "POST",
+      body: JSON.stringify({
+        name: decoded.name,
+        definition: decoded.definition,
+      }),
+    })
+      .then(() => {
+        setNotice(`Imported “${decoded.name}” from shared link.`);
+        router.replace("/strategies");
+        return refresh();
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Shared-link import failed"));
+  }, [user, router, searchParams]);
 
   useEffect(() => {
     if (!user) return;
@@ -403,6 +429,19 @@ function StrategiesContent() {
                         >
                           Export
                         </button>
+                        {s.definition ? (
+                          <button
+                            onClick={async () => {
+                              const encoded = encodeStrategyForSharing(s.definition as Record<string, unknown>, s.name);
+                              await navigator.clipboard.writeText(getStrategyShareUrl(encoded));
+                              setNotice(`Share link for “${s.name}” copied to clipboard.`);
+                            }}
+                            title="Copy a shareable link to this strategy"
+                            className="rounded border border-teal-200 px-1.5 py-0.5 text-[11px] text-teal-600 hover:bg-teal-50"
+                          >
+                            Share
+                          </button>
+                        ) : null}
                         <button
                           onClick={() => handleDelete(s.id)}
                           className="rounded border border-red-200 px-1.5 py-0.5 text-[11px] text-red-500 hover:bg-red-50"

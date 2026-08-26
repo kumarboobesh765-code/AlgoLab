@@ -11,12 +11,21 @@ import {
   type ExecutionAudit,
   type PlaceOrderRequest,
   type AlgoOrderRequest,
+  type AlgoRegisterOut,
+  type AlgoRegisterRequest,
+  type RegisteredAlgoOut,
+  type BracketOrderRequest,
+  type BracketOut,
+  type TickOut,
+  type DeployOut,
+  type DeployRequest,
+  type DeploymentOut,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
 
-const BROKERS = ["mock", "zerodha"];
+const BROKERS = ["mock", "zerodha", "upstox", "angelone", "dhan", "fyers", "icici", "5paisa"];
 const EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX"];
 const SIDES = ["BUY", "SELL"];
 const ORDER_TYPES = ["MARKET", "LIMIT", "SL", "SL-M"];
@@ -58,6 +67,14 @@ export default function ExecutionPage() {
   const [positions, setPositions] = useState<ExecutionPosition[]>([]);
   const [algos, setAlgos] = useState<ExecutionAlgoParent[]>([]);
   const [audit, setAudit] = useState<ExecutionAudit[]>([]);
+  const [registeredAlgos, setRegisteredAlgos] = useState<RegisteredAlgoOut[]>([]);
+  const [brackets, setBrackets] = useState<BracketOut[]>([]);
+  const [quotes, setQuotes] = useState<TickOut[]>([]);
+  const [watchlist, setWatchlist] = useState("NIFTY,BANKNIFTY");
+  const [deployments, setDeployments] = useState<DeploymentOut[]>([]);
+  const [deployStrategyId, setDeployStrategyId] = useState("");
+  const [deployMode, setDeployMode] = useState<"paper" | "live">("paper");
+  const [deployName, setDeployName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,9 +93,20 @@ export default function ExecutionPage() {
   const [algoType, setAlgoType] = useState("TWAP");
   const [algoSlices, setAlgoSlices] = useState(6);
 
+  // SEBI algo registration + bracket order
+  const [algoName, setAlgoName] = useState("");
+  const [algoSegment, setAlgoSegment] = useState("EQUITY");
+  const [algoExchange, setAlgoExchange] = useState("NSE");
+  const [registeredId, setRegisteredId] = useState<string | null>(null);
+  const [brkSymbol, setBrkSymbol] = useState("NIFTY");
+  const [brkSide, setBrkSide] = useState("BUY");
+  const [brkQty, setBrkQty] = useState(10);
+  const [brkTarget, setBrkTarget] = useState(21000);
+  const [brkStop, setBrkStop] = useState(20500);
+
   const refresh = useCallback(async () => {
     try {
-      const [b, r, f, o, p, a, au] = await Promise.all([
+      const [b, r, f, o, p, a, au, ra, br, deploymentsRes] = await Promise.all([
         api<string[]>("/execution/brokers"),
         api<ExecutionRiskStatus>(`/execution/risk?broker=${broker}`),
         api<ExecutionFunds>(`/execution/funds?broker=${broker}`),
@@ -86,6 +114,9 @@ export default function ExecutionPage() {
         api<ExecutionPosition[]>(`/execution/positions?broker=${broker}`),
         api<ExecutionAlgoParent[]>(`/execution/algos?broker=${broker}`),
         api<ExecutionAudit[]>(`/execution/audit?broker=${broker}`),
+        api<RegisteredAlgoOut[]>("/execution/algo/registered"),
+        api<BracketOut[]>(`/execution/brackets?broker=${broker}`),
+        api<DeploymentOut[]>("/execution/deployments"),
       ]);
       setBrokers(b);
       setRisk(r);
@@ -94,6 +125,9 @@ export default function ExecutionPage() {
       setPositions(p);
       setAlgos(a);
       setAudit(au);
+      setRegisteredAlgos(ra);
+      setBrackets(br);
+      setDeployments(deploymentsRes);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load execution data");
@@ -105,6 +139,25 @@ export default function ExecutionPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const syms = watchlist.split(",").map((s) => s.trim()).filter(Boolean).join(",");
+      api<TickOut[]>(`/execution/quotes?broker=${broker}&symbols=${syms}`)
+        .then((q) => {
+          if (!cancelled) setQuotes(q);
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [broker, watchlist]);
 
   const toggleKill = async () => {
     if (!risk) return;
@@ -181,6 +234,85 @@ export default function ExecutionPage() {
     }
   };
 
+  const registerAlgo = async () => {
+    if (!algoName) {
+      setError("Algo name required for SEBI registration");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const payload: AlgoRegisterRequest = {
+        name: algoName,
+        segment: algoSegment,
+        exchange: algoExchange,
+        strategy_id: null,
+      };
+      const res = await api<AlgoRegisterOut>("/execution/algo/register", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      setRegisteredId(res.algo_id);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Algo registration failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const placeBracket = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const payload: BracketOrderRequest = {
+        broker,
+        symbol: brkSymbol,
+        exchange: "NSE",
+        segment: "EQUITY",
+        side: brkSide,
+        order_type: "MARKET",
+        quantity: brkQty,
+        target_price: brkTarget,
+        stop_loss_price: brkStop,
+        algo_id: registeredId,
+      };
+      await api<BracketOut>("/execution/orders/bracket", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      await api<ExecutionOrder[]>(`/execution/orders/process-fills?broker=${broker}`, { method: "POST" });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Bracket order failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deployStrategy = async () => {
+    if (!deployStrategyId || !deployName) {
+      setError("Strategy ID and name required to deploy");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const payload: DeployRequest = {
+        strategy_id: deployStrategyId,
+        broker,
+        mode: deployMode,
+        name: deployName,
+      };
+      await api<DeployOut>("/execution/deploy", { method: "POST", body: JSON.stringify(payload) });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Deployment failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -233,6 +365,90 @@ export default function ExecutionPage() {
         />
       </div>
 
+      <Card title="Live Quotes" subtitle="Streaming watchlist (polls broker feed every 5s)">
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-500">Watchlist (comma-separated)</span>
+            <input
+              value={watchlist}
+              onChange={(e) => setWatchlist(e.target.value)}
+              className="rounded-md border border-slate-300 px-2 py-1"
+            />
+          </label>
+        </div>
+        {quotes.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">No quotes yet.</p>
+        ) : (
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+            {quotes.map((q) => (
+              <div key={q.symbol} className="rounded-md border border-slate-200 px-3 py-2">
+                <p className="text-xs font-medium text-slate-500">{q.symbol}</p>
+                <p className="text-lg font-semibold tabular-nums">{fmt(q.last_price)}</p>
+                <p className="text-[11px] text-slate-400">
+                  B {fmt(q.bid)} / A {fmt(q.ask)} · Vol {q.volume.toLocaleString("en-IN")}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card title="Deploy Strategy" subtitle="Register algo + place paper-order seam">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-500">Strategy ID</span>
+            <input
+              value={deployStrategyId}
+              onChange={(e) => setDeployStrategyId(e.target.value)}
+              className="rounded-md border border-slate-300 px-2 py-1"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-500">Mode</span>
+            <select
+              value={deployMode}
+              onChange={(e) => setDeployMode(e.target.value as "paper" | "live")}
+              className="rounded-md border border-slate-300 px-2 py-1"
+            >
+              <option value="paper">paper</option>
+              <option value="live">live</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-slate-500">Deploy Name</span>
+            <input
+              value={deployName}
+              onChange={(e) => setDeployName(e.target.value)}
+              className="rounded-md border border-slate-300 px-2 py-1"
+            />
+          </label>
+          <button
+            onClick={deployStrategy}
+            className="col-span-2 rounded-md border border-slate-400 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-600"
+            disabled={busy}
+          >
+            {busy ? "Deploying…" : "Deploy"}
+          </button>
+        </div>
+      </Card>
+      <Card title="Deployments" subtitle="Active strategy deployments">
+        {deployments.length === 0 ? (
+          <p className="text-sm text-slate-400">No deployments yet.</p>
+        ) : (
+          <div className="space-y-1 text-sm">
+            {deployments.map((d) => (
+              <div key={d.deployment_id} className="rounded-md border border-slate-200 px-2 py-1">
+                <p className="font-medium text-slate-800">{d.name}</p>
+                <p className="text-xs text-slate-500">
+                  {d.broker} / {d.mode} · algo: {d.algo_id} · {d.active ? "active" : "inactive"}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+</Card>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Place Order" subtitle="Routed through risk guards + audit trail">
           <div className="grid grid-cols-2 gap-2 text-sm">
@@ -388,6 +604,151 @@ export default function ExecutionPage() {
           >
             {risk?.kill_switch ? "Blocked by kill switch" : "Create & Release Algo"}
           </button>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title="SEBI Algo Registration" subtitle="Mint a compliant algo ID for order tagging">
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Name</span>
+              <input
+                value={algoName}
+                onChange={(e) => setAlgoName(e.target.value)}
+                placeholder="My Strategy"
+                className="rounded-md border border-slate-300 px-2 py-1"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Segment</span>
+              <select
+                value={algoSegment}
+                onChange={(e) => setAlgoSegment(e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              >
+                {["EQUITY", "FUTURES", "OPTIONS", "COMMODITY", "CURRENCY"].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Exchange</span>
+              <select
+                value={algoExchange}
+                onChange={(e) => setAlgoExchange(e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              >
+                {EXCHANGES.map((x) => (
+                  <option key={x} value={x}>
+                    {x}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex items-end">
+              {registeredId && (
+                <Badge tone="green">{registeredId}</Badge>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={registerAlgo}
+            disabled={busy}
+            className="mt-3 w-full rounded-md bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+          >
+            Register Algo
+          </button>
+          {registeredAlgos.length > 0 && (
+            <ul className="mt-3 space-y-1 text-sm">
+              {registeredAlgos.map((a) => (
+                <li key={a.algo_id} className="flex items-center justify-between border-b border-slate-100 pb-1">
+                  <span className="font-medium">{a.name}</span>
+                  <span className="text-slate-500">{a.algo_id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card title="Bracket / Cover Order" subtitle="Entry + auto target/stop-loss (OCO) on fill">
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Symbol</span>
+              <input
+                value={brkSymbol}
+                onChange={(e) => setBrkSymbol(e.target.value.toUpperCase())}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Side</span>
+              <select
+                value={brkSide}
+                onChange={(e) => setBrkSide(e.target.value)}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              >
+                {SIDES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Quantity</span>
+              <input
+                type="number"
+                value={brkQty}
+                onChange={(e) => setBrkQty(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Target Price</span>
+              <input
+                type="number"
+                value={brkTarget}
+                onChange={(e) => setBrkTarget(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-slate-500">Stop-Loss Price</span>
+              <input
+                type="number"
+                value={brkStop}
+                onChange={(e) => setBrkStop(Number(e.target.value))}
+                className="rounded-md border border-slate-300 px-2 py-1"
+              />
+            </label>
+            <div className="flex items-end">
+              {registeredId && (
+                <Badge tone="blue">algo: {registeredId}</Badge>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={placeBracket}
+            disabled={busy || risk?.kill_switch}
+            className="mt-3 w-full rounded-md bg-orange-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50"
+          >
+            {risk?.kill_switch ? "Blocked by kill switch" : "Place Bracket Order"}
+          </button>
+          {brackets.length > 0 && (
+            <ul className="mt-3 space-y-1 text-sm">
+              {brackets.map((b) => (
+                <li key={b.bracket_id} className="flex items-center justify-between border-b border-slate-100 pb-1">
+                  <span className="font-medium">{b.bracket_id}</span>
+                  <span className="text-slate-500">
+                    TGT {fmt(b.target_price)} / SL {fmt(b.stop_loss_price)} ·{" "}
+                    <Badge tone={b.done ? "green" : "amber"}>{b.done ? "armed" : "pending"}</Badge>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </div>
 

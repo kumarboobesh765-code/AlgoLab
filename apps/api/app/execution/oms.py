@@ -27,11 +27,15 @@ from app.execution.gateway import (
     Order,
     OrderRequest,
     OrderResponse,
+    OrderSide,
     OrderStatus,
+    OrderType,
     Position,
     Trade,
 )
 from app.execution.risk import RiskGuard, RiskViolation
+from app.execution.sebi import RegisteredAlgo, get_algo_registry
+from app.execution.stream import StreamManager, Tick
 
 
 @dataclass
@@ -53,6 +57,16 @@ class AlgoParent:
     created_at: datetime = field(default_factory=datetime.now)
 
 
+@dataclass
+class BracketParent:
+    parent_id: str
+    entry_order_id: str
+    target: OrderRequest
+    stop: OrderRequest
+    armed: bool = False
+    done: bool = False
+
+
 class OrderManager:
     """Stateful order manager bound to a single broker gateway."""
 
@@ -70,7 +84,9 @@ class OrderManager:
         self._orders_today: int = 0
         self._daily_pnl: float = 0.0
         self._algos: dict[str, AlgoParent] = {}
+        self._brackets: dict[str, BracketParent] = {}
         self._ref_prices: dict[str, float] = {}
+        self.stream = StreamManager()
 
     # -- audit ---------------------------------------------------------------
 
@@ -118,6 +134,13 @@ class OrderManager:
         if not await self.gateway.is_connected():
             await self.gateway.connect()
 
+        # Market orders have no price; fetch a reference price for sizing/risk.
+        ref = ref_price
+        if request.price <= 0:
+            quote = await self.get_quote(request.symbol)
+            if quote and quote.get("last_price"):
+                ref = quote["last_price"]
+
         funds = await self._safe_funds()
         positions = await self._safe_positions()
 
@@ -127,18 +150,33 @@ class OrderManager:
             positions=positions,
             orders_today=self._orders_today,
             daily_pnl=self._daily_pnl,
-            ref_price=ref_price,
+            ref_price=ref,
         )
         if violations:
             self._log("ORDER_REJECTED_RISK", "; ".join(violations))
             raise RiskViolation(violations)
 
         effective_tag = strategy_tag or request.tag
+        if request.algo_id:
+            effective_tag = f"{effective_tag or ''}|ALGO:{request.algo_id}".strip("|")
         req = request
-        if effective_tag:
+        if effective_tag != request.tag or request.algo_id:
             req = OrderRequest(
-                **{**request.__dict__, "tag": effective_tag}
-            ) if not request.tag else request
+                symbol=request.symbol,
+                exchange=request.exchange,
+                segment=request.segment,
+                side=request.side,
+                order_type=request.order_type,
+                quantity=request.quantity,
+                product=request.product,
+                validity=request.validity,
+                price=request.price,
+                trigger_price=request.trigger_price,
+                disclosed_quantity=request.disclosed_quantity,
+                tag=effective_tag or None,
+                is_amo=request.is_amo,
+                algo_id=request.algo_id,
+            )
 
         try:
             resp = await self.gateway.place_order(req)
@@ -207,6 +245,130 @@ class OrderManager:
     def list_algos(self) -> list[AlgoParent]:
         return list(self._algos.values())
 
+    # -- SEBI algo registration ----------------------------------------------
+
+    def register_algo(
+        self, name: str, segment: str, exchange: str, strategy_id: str | None = None
+    ) -> RegisteredAlgo:
+        algo = get_algo_registry().register(name, segment, exchange, strategy_id)
+        self._log("ALGO_REGISTERED", f"{algo.algo_id} {name} ({segment}/{exchange})", algo.algo_id)
+        return algo
+
+    def list_registered_algos(self) -> list[RegisteredAlgo]:
+        return get_algo_registry().list_algos()
+
+    def deactivate_algo(self, algo_id: str) -> bool:
+        ok = get_algo_registry().deactivate(algo_id)
+        if ok:
+            self._log("ALGO_DEACTIVATED", algo_id, algo_id)
+        return ok
+
+    # -- bracket / cover (OCO) orders ----------------------------------------
+
+    async def submit_bracket_order(
+        self,
+        entry: OrderRequest,
+        target_price: float,
+        stop_loss_price: float,
+        trailing_stop: float | None = None,
+    ) -> BracketParent:
+        """Place an entry, then auto-arm target + stop-loss on fill.
+
+        The entry carries `entry.algo_id` (SEBI tag) when provided; child
+        orders inherit it. Children are released by :meth:`process_fills`
+        once the entry is filled.
+        """
+        resp = await self.submit_order(entry)
+        exit_side = OrderSide.SELL if entry.side == OrderSide.BUY else OrderSide.BUY
+        target = OrderRequest(
+            symbol=entry.symbol,
+            exchange=entry.exchange,
+            segment=entry.segment,
+            side=exit_side,
+            order_type=OrderType.LIMIT,
+            quantity=entry.quantity,
+            product=entry.product,
+            validity=entry.validity,
+            price=target_price,
+            tag=f"{entry.tag or ''}|TGT".strip("|"),
+            algo_id=entry.algo_id,
+        )
+        stop = OrderRequest(
+            symbol=entry.symbol,
+            exchange=entry.exchange,
+            segment=entry.segment,
+            side=exit_side,
+            order_type=OrderType.SL,
+            quantity=entry.quantity,
+            product=entry.product,
+            validity=entry.validity,
+            trigger_price=stop_loss_price,
+            price=stop_loss_price,
+            tag=f"{entry.tag or ''}|SL".strip("|"),
+            algo_id=entry.algo_id,
+        )
+        parent = BracketParent(
+            parent_id=f"BRK_{uuid.uuid4().hex[:10]}",
+            entry_order_id=resp.broker_order_id,
+            target=target,
+            stop=stop,
+        )
+        self._brackets[parent.parent_id] = parent
+        self._log("BRACKET_CREATED", f"entry {resp.broker_order_id} tgt {target_price} sl {stop_loss_price}", parent.parent_id)
+        return parent
+
+    async def submit_oco(
+        self, entry: OrderRequest, target: OrderRequest, stop_loss: OrderRequest
+    ) -> BracketParent:
+        """Place an entry, then on fill place a one-cancels-other (target + SL)."""
+        resp = await self.submit_order(entry)
+        parent = BracketParent(
+            parent_id=f"OCO_{uuid.uuid4().hex[:10]}",
+            entry_order_id=resp.broker_order_id,
+            target=target,
+            stop=stop_loss,
+        )
+        self._brackets[parent.parent_id] = parent
+        self._log("OCO_CREATED", f"entry {resp.broker_order_id}", parent.parent_id)
+        return parent
+
+    async def process_fills(self) -> list[OrderResponse]:
+        """Arm bracket/OCO child orders once their entry is filled.
+
+        Returns responses for any child orders placed during this pass.
+        """
+        placed: list[OrderResponse] = []
+        for parent in list(self._brackets.values()):
+            if parent.done or parent.armed:
+                continue
+            entry = await self.gateway.get_order_history(parent.entry_order_id)
+            entry_order = entry[0] if entry else None
+            if not entry_order or entry_order.filled_quantity <= 0:
+                continue
+            # Entry filled — release target + stop loss (one-cancels-other)
+            ref = self._ref_prices.get(parent.target.symbol)
+            try:
+                tgt_resp = await self.submit_order(parent.target, ref_price=ref)
+                placed.append(tgt_resp)
+                sl_resp = await self.submit_order(parent.stop, ref_price=ref)
+                placed.append(sl_resp)
+                parent.armed = True
+                parent.done = True
+                self._log(
+                    "BRACKET_ARMED",
+                    f"target {parent.target.order_type.value} {parent.target.price} / "
+                    f"SL {parent.stop.trigger_price}",
+                    parent.parent_id,
+                )
+            except RiskViolation as exc:
+                self._log("BRACKET_BLOCKED", "; ".join(exc.violations), parent.parent_id)
+            except Exception as exc:
+                self._log("BRACKET_FAILED", str(exc), parent.parent_id)
+        return placed
+
+    def list_brackets(self) -> list[BracketParent]:
+        return list(self._brackets.values())
+
     # -- lifecycle passthroughs ----------------------------------------------
 
     async def cancel_order(self, order_id: str) -> OrderResponse:
@@ -270,6 +432,47 @@ class OrderManager:
             return data.get(symbol)
         except Exception:
             return None
+
+    async def refresh_quotes(self, symbols: list[str]) -> list[Tick]:
+        """Fetch latest quotes for symbols and publish them to the stream."""
+        from app.execution.gateway import Exchange, Instrument, Segment
+
+        instruments = [
+            Instrument(
+                symbol=s,
+                exchange=Exchange.NSE,
+                segment=Segment.EQUITY,
+                security_id=s,
+                token="",
+                name=s,
+            )
+            for s in symbols
+        ]
+        try:
+            data = await self.gateway.get_quote(instruments)
+        except Exception:
+            return list(self.stream.snapshot())
+        ticks: list[Tick] = []
+        for s in symbols:
+            q = data.get(s)
+            if not q:
+                continue
+            tick = Tick(
+                symbol=s,
+                last_price=float(q.get("last_price", 0)),
+                bid=float(q.get("bid", 0)),
+                ask=float(q.get("ask", 0)),
+                volume=int(q.get("volume", 0)),
+                oi=int(q.get("oi", 0)),
+                change=float(q.get("change", 0)),
+                change_pct=float(q.get("change_pct", 0)),
+            )
+            self.stream.publish(tick)
+            ticks.append(tick)
+        return ticks
+
+    def latest_quotes(self) -> list[Tick]:
+        return self.stream.snapshot()
 
 
 # -- per-broker manager registry (singletons across requests) ---------------

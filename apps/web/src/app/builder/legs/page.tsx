@@ -112,6 +112,13 @@ export default function LegBuilderPage() {
   const [run, setRun] = useState<BacktestRun | null>(null);
   const [saved, setSaved] = useState<Strategy[]>([]);
   const [lotSizes, setLotSizes] = useState<Record<string, number>>({});
+  const [chainFor, setChainFor] = useState(underlying);
+
+  if (chainFor !== underlying) {
+    setChainFor(underlying);
+    setChain(null);
+    setChainError(null);
+  }
 
   const step = STRIKE_STEPS[underlying] ?? 50;
 
@@ -129,8 +136,6 @@ export default function LegBuilderPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setChain(null);
-    setChainError(null);
     api<OptionChain>(`/market/option-chain?underlying=${underlying}`)
       .then((c) => {
         if (!cancelled) {

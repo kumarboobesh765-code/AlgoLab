@@ -21,7 +21,7 @@ from app.execution.gateway import (
 class PlaceOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    broker: str = Field(default="mock", pattern=r"^(mock|zerodha)$")
+    broker: str = Field(default="mock", pattern=r"^(mock|zerodha|upstox|angelone|dhan|fyers|icici|5paisa)$")
     symbol: str = Field(min_length=1, max_length=50)
     exchange: Exchange
     segment: Segment
@@ -41,7 +41,7 @@ class PlaceOrderRequest(BaseModel):
 class AlgoOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    broker: str = Field(default="mock", pattern=r"^(mock|zerodha)$")
+    broker: str = Field(default="mock", pattern=r"^(mock|zerodha|upstox|angelone|dhan|fyers|icici|5paisa)$")
     symbol: str = Field(min_length=1, max_length=50)
     exchange: Exchange
     segment: Segment
@@ -130,3 +130,107 @@ class AuditOut(BaseModel):
     detail: str
     broker_order_id: str
     user: str
+
+
+class AlgoRegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+    segment: Segment
+    exchange: Exchange
+    strategy_id: str | None = Field(default=None, max_length=80)
+
+
+class AlgoRegisterOut(BaseModel):
+    algo_id: str
+    name: str
+    segment: str
+    exchange: str
+    strategy_id: str | None = None
+    active: bool
+
+
+class RegisteredAlgoOut(BaseModel):
+    algo_id: str
+    name: str
+    segment: str
+    exchange: str
+    strategy_id: str | None = None
+    active: bool
+    registered_at: str
+
+
+class BracketOrderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    broker: str = Field(default="mock", pattern=r"^(mock|zerodha|upstox|angelone|dhan|fyers|icici|5paisa)$")
+    symbol: str = Field(min_length=1, max_length=50)
+    exchange: Exchange
+    segment: Segment
+    side: OrderSide
+    order_type: OrderType
+    quantity: int = Field(ge=1, le=1_000_000)
+    product: ProductType = ProductType.MIS
+    price: float = 0.0
+    trigger_price: float = 0.0
+    target_price: float = Field(gt=0)
+    stop_loss_price: float = Field(gt=0)
+    trailing_stop: float | None = None
+    tag: str | None = Field(default=None, max_length=40)
+    algo_id: str | None = Field(default=None, max_length=40)
+
+
+class BracketOut(BaseModel):
+    bracket_id: str
+    entry_order_id: str
+    target_price: float
+    stop_loss_price: float
+    armed: bool
+    done: bool
+
+
+class TickOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    symbol: str
+    last_price: float
+    bid: float = 0.0
+    ask: float = 0.0
+    volume: int = 0
+    oi: int = 0
+    change: float = 0.0
+    change_pct: float = 0.0
+
+
+class DeployRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    strategy_id: str = Field(min_length=1, max_length=80)
+    broker: str = Field(default="mock", pattern=r"^(mock|zerodha|upstox|angelone|dhan|fyers|icici|5paisa)$")
+    mode: str = Field(pattern=r"^(paper|live)$")
+    name: str = Field(min_length=1, max_length=80)
+    segment: str = "EQUITY"
+    exchange: str = "NSE"
+
+
+class DeployOut(BaseModel):
+    deployment_id: str
+    strategy_id: str
+    algo_id: str
+    broker: str
+    mode: str
+    name: str
+    active: bool
+
+
+class DeploymentOut(BaseModel):
+    deployment_id: str
+    strategy_id: str
+    algo_id: str
+    broker: str
+    mode: str
+    name: str
+    segment: str
+    exchange: str
+    active: bool
+    created_at: str

@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
+import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist";
 
 function ApiStatus() {
   const [health, setHealth] = useState<Health | null>(null);
@@ -168,6 +169,7 @@ export function DashboardView() {
 
   return (
     <div className="space-y-5">
+      <OnboardingChecklist />
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

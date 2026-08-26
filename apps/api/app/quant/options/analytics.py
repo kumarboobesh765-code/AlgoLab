@@ -7,7 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 
-from app.quant.options import calculate_greeks, implied_volatility
+from app.quant.options.pricing import calculate_greeks, implied_volatility
 
 
 @dataclass(frozen=True)

@@ -13,7 +13,7 @@ from app.quant.options.formulas import ExpiryType
 
 def is_market_holiday(dt: date) -> bool:
     """Check if date is a market holiday (basic weekend + common holidays).
-    
+
     For production, integrate with NSE/BSE holiday calendar.
     """
     if dt.weekday() >= 5:  # Saturday=5, Sunday=6

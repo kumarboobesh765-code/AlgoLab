@@ -326,7 +326,6 @@ class DemoProvider(MarketDataProvider):
         d1 = DemoProvider._bs_d1(spot, strike, years, iv)
         d2 = d1 - iv * math.sqrt(years)
         r = 0.065
-        nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
         nd2 = 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
         if kind == "call":
             theta = -(spot * iv * math.exp(-(d1**2) / 2)) / (2 * math.sqrt(years) * math.sqrt(2 * math.pi)) - r * strike * math.exp(-r * years) * nd2

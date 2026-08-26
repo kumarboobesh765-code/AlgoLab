@@ -49,7 +49,13 @@ A professional Indian-market algorithmic trading **research platform**.
 | **Version compare**: backtest metric deltas + side-by-side definition diff between any two versions | ✅ |
 | **Strategy import/export**: JSON download/upload from the Strategies page (`/strategies/{id}/export`, `/strategies/import`) | ✅ |
 | **Trade Replay debugger**: bar-by-bar playback of any completed run — candlestick chart with B/S markers, equity strip, position & unrealized P&L panels | ✅ |
-| Backend test suite (157 tests) | ✅ |
+| **Market calendar** (`/calendar`): NSE trading holidays (2024-26), upcoming F&O expiries (weekly NIFTY/SENSEX, monthly third-Wednesday), lot-size + freeze-quantity validator | ✅ |
+| **Transaction cost calculator** (`POST /calendar/costs`): STT, exchange txn, SEBI fee, stamp duty, GST — per segment/product | ✅ |
+| **Prometheus-style metrics** (`GET /api/v1/metrics`): request counts by method/path/status + latency sums, zero dependencies | ✅ |
+| **UX polish**: toast notifications, dark/light theme toggle (persisted), mobile-responsive sidebar drawer, dashboard onboarding checklist | ✅ |
+| **Strategy sharing**: copy a shareable link (`?import=<base64url>`) that imports the strategy into another account | ✅ |
+| CI pipeline (GitHub Actions): ruff + pytest on backend, eslint + build on frontend | ✅ |
+| Backend test suite (307 tests) | ✅ |
 
 Everything else (analytics, market scanner, portfolio)
 is intentionally marked **Coming Soon** in the UI — see the roadmap below.
@@ -154,7 +160,7 @@ See [.env.example](.env.example). Key values:
 
 ```powershell
 cd apps/api
-uv run pytest -v        # 180 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer, forward-test API, AI drafting, alerts
+uv run pytest -v        # 307 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer, forward-test API, AI drafting, alerts, market calendar, metrics
 cd apps/web
 npm run lint            # ESLint (react-hooks, next)
 npm run build           # type-check + production build of all 24 routes
@@ -173,8 +179,9 @@ Phases follow the master plan:
 7. ✅ **Optimization** — grid search + walk-forward analysis with parameter range sweep and overfitting detection
 8. ✅ **Polish** — Reports UI, version comparison, JSON import/export, trade replay/debugger
 9. ✅ **Platform extras** — Analytics / Market Scanner / Portfolio pages, AI Builder (`POST /ai/draft-strategy`, LLM-first with deterministic rule-based fallback), Strategy Library, Settings, forward-test auto-tick scheduler, Telegram/webhook alerts
+10. ✅ **Scale & UX** — market calendar + statutory cost calculator, expiry/lot validators, metrics endpoint, CI pipeline, toasts/theme/mobile/onboarding polish, strategy share links
 
-Remaining (post-roadmap): DhanHQ live verification (4 `LIVE-VERIFY` markers need real credentials), options analytics (Greeks/payoffs), and broker execution behind a kill switch.
+Remaining (post-roadmap): DhanHQ live verification (`LIVE-VERIFY` markers need real credentials), Celery job queue for long-running optimizations (needs Redis in dev), Playwright E2E suite, strategy marketplace.
 
 ## Disclaimer
 

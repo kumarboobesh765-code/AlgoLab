@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // Allow the dev server to be reached from non-localhost hosts (e.g. a LAN IP
   // or forwarded port). Next blocks cross-origin dev chunk loads by default.
-  allowedDevOrigins: ["*", "10.124.142.30", "localhost", "127.0.0.1"],
+  allowedDevOrigins: ["localhost", "127.0.0.1", "10.124.142.30", "192.168.0.110"],
 };
 
 export default nextConfig;

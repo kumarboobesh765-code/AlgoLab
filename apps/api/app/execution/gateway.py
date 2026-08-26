@@ -20,16 +20,16 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     """Order side enumeration."""
     BUY = "BUY"
     SELL = "SELL"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     """Order type enumeration."""
     MARKET = "MARKET"
     LIMIT = "LIMIT"
@@ -37,7 +37,7 @@ class OrderType(str, Enum):
     SL_M = "SL-M"       # Stop Loss Market
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     """Order status enumeration."""
     PENDING = "PENDING"
     OPEN = "OPEN"
@@ -48,7 +48,7 @@ class OrderStatus(str, Enum):
     EXPIRED = "EXPIRED"
 
 
-class ProductType(str, Enum):
+class ProductType(StrEnum):
     """Product type enumeration."""
     CNC = "CNC"         # Cash and Carry (delivery)
     MIS = "MIS"         # Margin Intraday Square-off
@@ -57,13 +57,13 @@ class ProductType(str, Enum):
     BO = "BO"           # Bracket Order
 
 
-class Validity(str, Enum):
+class Validity(StrEnum):
     """Order validity enumeration."""
     DAY = "DAY"
     IOC = "IOC"         # Immediate or Cancel
 
 
-class Exchange(str, Enum):
+class Exchange(StrEnum):
     """Exchange enumeration."""
     NSE = "NSE"
     BSE = "BSE"
@@ -73,7 +73,7 @@ class Exchange(str, Enum):
     NCDEX = "NCDEX"
 
 
-class Segment(str, Enum):
+class Segment(StrEnum):
     """Market segment enumeration."""
     EQUITY = "EQUITY"
     FUTURES = "FUTURES"
@@ -114,6 +114,7 @@ class OrderRequest:
     disclosed_quantity: int = 0
     tag: str | None = None  # User-defined tag for identification
     is_amo: bool = False       # After Market Order
+    algo_id: str | None = None  # SEBI/clearing-corpus algo registration ID
 
 
 @dataclass(frozen=True)
@@ -244,7 +245,7 @@ class OrderRejectedError(BrokerError):
 
 class BrokerGateway(ABC):
     """Abstract base class for all broker gateways.
-    
+
     Each broker must implement this interface to provide a unified
     order management, position tracking, and market data interface.
     """
@@ -255,7 +256,7 @@ class BrokerGateway(ABC):
 
     def __init__(self, config: dict):
         """Initialize broker gateway with configuration.
-        
+
         Args:
             config: Broker-specific configuration dict containing:
                 - api_key: API key
@@ -271,7 +272,7 @@ class BrokerGateway(ABC):
     @abstractmethod
     async def connect(self) -> bool:
         """Establish connection and authenticate with broker.
-        
+
         Returns:
             True if connection successful, False otherwise
         """
@@ -330,13 +331,13 @@ class BrokerGateway(ABC):
     @abstractmethod
     async def place_order(self, request: OrderRequest) -> OrderResponse:
         """Place a new order.
-        
+
         Args:
             request: Order placement request
-            
+
         Returns:
             OrderResponse with broker order ID and status
-            
+
         Raises:
             OrderRejectedError: If order is rejected
             InsufficientMarginError: If insufficient margin
@@ -370,7 +371,7 @@ class BrokerGateway(ABC):
     @abstractmethod
     async def get_quote(self, instruments: list[Instrument]) -> dict[str, dict]:
         """Get live quotes for instruments.
-        
+
         Returns:
             Dict mapping instrument symbol to quote data with:
             - last_price, bid, ask, bid_qty, ask_qty, volume, oi, change, change_pct
@@ -397,7 +398,7 @@ class BrokerGateway(ABC):
 
     async def place_basket_order(self, orders: list[OrderRequest]) -> list[OrderResponse]:
         """Place multiple orders as a basket (if supported).
-        
+
         Default implementation places orders sequentially.
         """
         responses = []
@@ -416,7 +417,7 @@ class BrokerGateway(ABC):
 
     async def place_oco_order(self, entry: OrderRequest, target: OrderRequest, stop_loss: OrderRequest) -> list[OrderResponse]:
         """Place OCO (One Cancels Other) order - target and stop loss.
-        
+
         Default implementation: places entry, then on fill places target and SL.
         """
         raise NotImplementedError("OCO orders not implemented for this broker")
@@ -424,7 +425,7 @@ class BrokerGateway(ABC):
     async def place_bracket_order(self, entry: OrderRequest, target_price: float, stop_loss_price: float,
                                   trailing_stop: float | None = None) -> list[OrderResponse]:
         """Place bracket order with entry, target, and stop loss.
-        
+
         Default implementation: places entry, then on fill places target and SL.
         """
         raise NotImplementedError("Bracket orders not implemented for this broker")
@@ -438,11 +439,11 @@ class BrokerGateway(ABC):
 
     async def subscribe_ticks(self, instruments: list[Instrument], callback) -> bool:
         """Subscribe to live tick data via WebSocket.
-        
+
         Args:
             instruments: List of instruments to subscribe
             callback: Async function to call with tick data
-            
+
         Returns:
             True if subscription successful
         """
@@ -517,8 +518,10 @@ class MockGateway(BrokerGateway):
         return list(self._orders.values())
 
     async def get_order_history(self, order_id: str) -> list[Order]:
-        order = self._orders.get(order_id)
-        return [order] if order else []
+        for o in self._orders.values():
+            if o.order_id == order_id or o.broker_order_id == order_id:
+                return [o]
+        return []
 
     async def get_trades(self, from_date=None, to_date=None) -> list[Trade]:
         return []
