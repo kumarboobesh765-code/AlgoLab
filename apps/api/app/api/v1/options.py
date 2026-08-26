@@ -406,3 +406,102 @@ async def expired_option_history(
             for c in candles
         ],
     }
+
+
+# ---- F&O margin estimator (SPAN+Exposure approximation) ----
+
+
+@router.post("/margin")
+async def estimate_margin_endpoint(request: dict, user: CurrentUser = None) -> dict:
+    """Rule-of-thumb F&O margin block for a leg structure.
+
+    Body: {underlying, spot, lot_size, legs: [{action, option_type, strike, lots, premium}]}
+    Real SPAN comes from the broker; this is a planning estimate.
+    """
+    from app.options.margin import MarginLeg, estimate_margin
+
+    underlying = str(request.get("underlying", "NIFTY"))
+    spot = float(request.get("spot", 0))
+    lot_size = int(request.get("lot_size", 50))
+    if spot <= 0 or lot_size <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            detail="spot and lot_size must be positive")
+
+    raw_legs = request.get("legs") or []
+    if not 1 <= len(raw_legs) <= 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            detail="legs must contain between 1 and 12 entries")
+    legs: list[MarginLeg] = []
+    for rl in raw_legs:
+        action = str(rl.get("action", "buy")).lower()
+        otype = str(rl.get("option_type", "CE")).upper()
+        if action not in ("buy", "sell"):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="action must be buy|sell")
+        legs.append(MarginLeg(
+            action=action, option_type=otype,
+            strike=float(rl["strike"]) if rl.get("strike") is not None else None,
+            lots=max(1, int(rl.get("lots", 1))),
+            premium=max(0.0, float(rl.get("premium", 0))),
+        ))
+
+    est = estimate_margin(underlying, spot, legs, lot_size)
+    out = est.as_dict()
+    out["disclaimer"] = (
+        "Estimate using rule-of-thumb SPAN+Exposure rates. Your broker's real "
+        "margin file governs actual blocks — always verify before ordering."
+    )
+    return out
+
+
+# ---- auto-adjustment recommendations (Quantman-style repair logic) ----
+
+
+@router.post("/adjust-check")
+async def adjust_check(request: dict, user: CurrentUser = None) -> dict:
+    """Recommend adjustment actions for an open leg position.
+
+    Body: {spot, entry_spot, dte_days, lot_size,
+           legs: [{action, option_type, strike, lots, entry_price, current_price}],
+           policy?: {max_loss_pct_of_credit, profit_pct_of_credit, roll_buffer_pct, min_dte_to_hold}}
+    """
+    from app.execution.adjuster import AdjustPolicy, LegState, check_adjustments
+
+    try:
+        spot = float(request["spot"])
+        entry_spot = float(request.get("entry_spot") or spot)
+        dte = int(request.get("dte_days", 7))
+        lot = int(request.get("lot_size", 50))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            detail=f"bad numeric field: {exc}") from exc
+    if spot <= 0 or lot <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="spot/lot_size must be positive")
+
+    raw_legs = request.get("legs") or []
+    if not raw_legs:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="legs required")
+    legs = [
+        LegState(
+            action=str(rl.get("action", "sell")).lower(),
+            option_type=str(rl.get("option_type", "CE")).upper(),
+            strike=float(rl["strike"]),
+            lots=int(rl.get("lots", 1)),
+            entry_price=float(rl.get("entry_price", 0)),
+            current_price=float(rl.get("current_price", 0)),
+        )
+        for rl in raw_legs
+    ]
+
+    pol_raw = request.get("policy") or {}
+    policy = AdjustPolicy(
+        max_loss_pct_of_credit=float(pol_raw.get("max_loss_pct_of_credit", 1.5)),
+        profit_pct_of_credit=float(pol_raw.get("profit_pct_of_credit", 0.6)),
+        roll_buffer_pct=float(pol_raw.get("roll_buffer_pct", 2.0)),
+        min_dte_to_hold=int(pol_raw.get("min_dte_to_hold", 1)),
+    )
+
+    actions = check_adjustments(
+        spot=spot, entry_spot=entry_spot, dte_days=dte,
+        legs=legs, lot_size=lot, policy=policy,
+    )
+    return {"actions": [a.as_dict() for a in actions]}

@@ -365,6 +365,13 @@ export default function ExecutionPage() {
         />
       </div>
 
+      <Card
+        title="Automation"
+        subtitle="Signal → order loop: evaluate a strategy on stored candles and route orders through the OMS"
+      >
+        <AutomationPanel />
+      </Card>
+
       <Card title="Live Quotes" subtitle="Streaming watchlist (polls broker feed every 5s)">
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-sm">

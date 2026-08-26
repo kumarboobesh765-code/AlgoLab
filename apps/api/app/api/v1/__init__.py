@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     ai,
     auth,
+    automation,
     backtests,
     calendar,
     data,
@@ -36,3 +37,4 @@ api_router.include_router(forward_tests.router)
 api_router.include_router(optimizations.router)
 api_router.include_router(calendar.router)
 api_router.include_router(tax.router)
+api_router.include_router(automation.router)
