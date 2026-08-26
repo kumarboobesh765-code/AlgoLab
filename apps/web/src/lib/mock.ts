@@ -1112,6 +1112,47 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
     return ok(mockAiDraft(body.prompt ?? ""));
   }
 
+  // tax report
+  if (pathOnly === "/tax/report" && method === "GET") {
+    const res = {
+      fy: params.get("fy") ?? "2026-27", start: "2026-04-01", end: "2027-03-31",
+      segment: params.get("segment") ?? "equity",
+      total_trades: 2, winners: 1, losers: 1,
+      stcg_pnl: 1450.0, ltcg_pnl: -320.5, gross_profit: 1450.0, gross_loss: -320.5, net_pnl: 1129.5,
+      fno_turnover_abs_pnl: 0, est_tax_stcg: 290.0, est_tax_ltcg: 0.0,
+      trades: [
+        { exit_date: daysAgo(20), underlying: "NIFTY", direction: "long", quantity: 10, entry_price: 23800, exit_price: 23945, realized_pnl: 1450.0, holding_days: 42, category: "STCG" },
+        { exit_date: daysAgo(8), underlying: "BANKNIFTY", direction: "short", quantity: 15, entry_price: 51200, exit_price: 51421.33, realized_pnl: -320.5, holding_days: 12, category: "STCG" },
+      ],
+    };
+    return ok(res);
+  }
+  if (pathOnly === "/tax/report/csv" && method === "GET") {
+    return ok("exit_date,underlying,direction,quantity,entry_price,exit_price,realized_pnl,holding_days,category\n");
+  }
+
+  // optimizations — heatmap
+  if (pathOnly === "/optimizations/heatmap" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const xs: number[] = body.x_values ?? [5, 10];
+    const ys: number[] = body.y_values ?? [20, 30];
+    const cells = xs.flatMap((x: number) =>
+      ys.map((y: number) => ({ x, y, value: Math.round((Math.sin(x) + Math.cos(y / 10)) * 100) / 100, trades: Math.max(1, Math.round(x % y)) })),
+    );
+    const best = cells.reduce((a, b) => ((b.value ?? 0) > (a.value ?? 0) ? b : a), cells[0]);
+    const worst = cells.reduce((a, b) => ((b.value ?? 0) < (a.value ?? 0) ? b : a), cells[0]);
+    return ok({
+      x_key: body.x_key ?? "indicators.f.params.length",
+      y_key: body.y_key ?? "indicators.s.params.length",
+      x_values: [...new Set(xs)].sort((a: number, b: number) => a - b),
+      y_values: [...new Set(ys)].sort((a: number, b: number) => a - b),
+      metric: body.metric ?? "sharpe_ratio",
+      cells,
+      best,
+      worst,
+    });
+  }
+
   return err(404, `Mock has no handler for ${method} ${path}`);
 }
 

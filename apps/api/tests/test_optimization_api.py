@@ -176,3 +176,130 @@ async def test_not_enough_candles_400(client, auth_headers):
 async def test_user_isolation(client, auth_headers):
     resp = await client.get(f"{BASE}/00000000-0000-0000-0000-000000000009", headers=auth_headers)
     assert resp.status_code == 404
+
+
+# ---- background execution mode ----
+
+
+async def test_background_run_executes(client, auth_headers, db_engine, db_session, monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    import app.db.session as db_session_module
+
+    # Route the executor's session factory at the isolated test database
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    monkeypatch.setattr(db_session_module, "get_session_factory", lambda: factory)
+
+    await ingest(client, auth_headers)
+    strategy = await make_strategy(client, auth_headers)
+
+    resp = await client.post(
+        f"{BASE}?background=true",
+        json={
+            "strategy_id": strategy["id"],
+            "method": "grid",
+            "param_ranges": {"indicators.f.params.length": [3, 5]},
+            "start": "2026-08-03",
+            "end": "2026-08-14",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 202, resp.text
+    run = resp.json()
+    assert run["status"] == "queued"
+
+    # TestClient runs BackgroundTasks inline before returning — the run is done.
+    detail = (await client.get(f"{BASE}/{run['id']}", headers=auth_headers)).json()
+    assert detail["status"] == "completed"
+    assert detail["completed_combinations"] == 2
+    assert detail["best_params"] is not None
+
+
+# ---- parameter sensitivity heatmap ----
+
+
+async def test_heatmap_happy_path(client, auth_headers):
+    await ingest(client, auth_headers)
+    strategy = await make_strategy(client, auth_headers)
+
+    resp = await client.post(
+        f"{BASE}/heatmap",
+        json={
+            "strategy_id": strategy["id"],
+            "x_key": "indicators.f.params.length",
+            "x_values": [3, 5, 8],
+            "y_key": "indicators.s.params.length",
+            "y_values": [15, 20],
+            "metric": "sharpe_ratio",
+            "start": "2026-08-03",
+            "end": "2026-08-14",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["x_key"] == "indicators.f.params.length"
+    assert data["metric"] == "sharpe_ratio"
+    assert len(data["cells"]) == 6
+    assert all(c["value"] is not None for c in data["cells"])
+    assert data["best"] is not None and data["worst"] is not None
+
+
+async def test_heatmap_too_large_422(client, auth_headers):
+    await ingest(client, auth_headers)
+    strategy = await make_strategy(client, auth_headers)
+    resp = await client.post(
+        f"{BASE}/heatmap",
+        json={
+            "strategy_id": strategy["id"],
+            "x_key": "indicators.f.params.length",
+            "x_values": list(range(2, 28)),  # 26 values > schema cap of 25
+            "y_key": "indicators.s.params.length",
+            "y_values": list(range(10, 35)),
+            "start": "2026-08-03",
+            "end": "2026-08-14",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_heatmap_not_enough_candles_400(client, auth_headers):
+    await ingest(client, auth_headers)
+    strategy = await make_strategy(client, auth_headers)
+    resp = await client.post(
+        f"{BASE}/heatmap",
+        json={
+            "strategy_id": strategy["id"],
+            "x_key": "indicators.f.params.length",
+            "x_values": [3, 5],
+            "y_key": "indicators.s.params.length",
+            "y_values": [15, 20],
+            "start": "2026-07-01",
+            "end": "2026-07-02",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
+
+async def test_heatmap_bad_params_grey_cells(client, auth_headers):
+    """A param key that doesn't exist yields failed combos → null values, not a 500."""
+    await ingest(client, auth_headers)
+    strategy = await make_strategy(client, auth_headers)
+    resp = await client.post(
+        f"{BASE}/heatmap",
+        json={
+            "strategy_id": strategy["id"],
+            "x_key": "risk.stop_loss_pct",
+            "x_values": [0.5, 1.0],
+            "y_key": "indicators.f.params.length",
+            "y_values": [3, 5],
+            "start": "2026-08-03",
+            "end": "2026-08-14",
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert len(data["cells"]) == 4

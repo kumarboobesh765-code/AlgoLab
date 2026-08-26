@@ -37,3 +37,7 @@ next-env.d.ts
 
 # Local tool state
 .kilo/
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/

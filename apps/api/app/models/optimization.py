@@ -25,6 +25,7 @@ class OptimizationRun(Base):
     # Config
     method: Mapped[str] = mapped_column(String(20), nullable=False)  # grid | walk_forward
     param_ranges: Mapped[dict] = mapped_column(JSONType, nullable=False)
+    config: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)  # {initial_capital}
     start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     train_pct: Mapped[float] = mapped_column(Float, default=0.7, nullable=False)

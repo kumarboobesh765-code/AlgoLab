@@ -75,6 +75,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await resp.json()) as T;
 }
 
+/** Like api() but returns the raw Response body as a Blob (CSV/file downloads). */
+export async function apiBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const headers = new Headers(init.headers);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const resp = await fetch(`${API_URL}/api/v1${path}`, { ...init, headers });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = await resp.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      /* keep statusText */
+    }
+    throw new ApiError(resp.status, detail);
+  }
+  return await resp.blob();
+}
+
 // ---- strategy sharing (base64 URL fragment) ----
 
 export function encodeStrategyForSharing(definition: Record<string, unknown>, name: string): string {

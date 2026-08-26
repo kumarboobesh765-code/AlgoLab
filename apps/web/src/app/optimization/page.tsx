@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
+import { HeatmapPanel } from "@/components/optimization/HeatmapPanel";
 import { downloadCsv } from "@/lib/csv";
 import { loadSettings } from "@/lib/settings";
 
@@ -134,18 +135,26 @@ export default function OptimizationPage() {
         costs_pct: s.costsPct,
         ...(method === "walk_forward" ? { train_pct: Math.min(Math.max(trainPct, 31), 89) / 100 } : {}),
       };
-      const run = await api<OptimizationRun>("/optimizations", {
+      const run = await api<OptimizationRun>("/optimizations?background=true", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setRuns([run, ...runs]);
       setSelected(run);
       setResults([]);
-      if (run.status === "completed") {
-        const res = await api<OptimizationResult[]>(`/optimizations/${run.id}/results`);
+      // Poll until the background executor finishes (max ~90 s)
+      const deadline = Date.now() + 90_000;
+      let final = run;
+      while ((final.status === "queued" || final.status === "running") && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        final = await api<OptimizationRun>(`/optimizations/${run.id}`);
+        setSelected(final);
+      }
+      if (final.status === "completed") {
+        const res = await api<OptimizationResult[]>(`/optimizations/${final.id}/results`);
         setResults(res);
-      } else {
-        setError(`Run finished with status “${run.status}” — see history below.`);
+      } else if (final.status !== "completed") {
+        setError(`Run finished with status “${final.status}” — see history below.`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Optimization failed");
@@ -255,6 +264,13 @@ export default function OptimizationPage() {
           <span className="text-xs text-slate-400">Max 500 combinations</span>
         </div>
         {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      </Card>
+
+      <Card
+        title="Sensitivity Heatmap"
+        subtitle="Backtest every (x, y) parameter pair — green means better. Spots overfitting at a glance."
+      >
+        <HeatmapPanel strategyId={strategyId} paramHints={paramHints} start={start} end={end} />
       </Card>
 
       {selected && selected.status === "completed" && selected.best_params && (

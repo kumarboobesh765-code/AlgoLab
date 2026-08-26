@@ -198,3 +198,58 @@ def run_walk_forward(
     # Sort by train_sharpe descending so overfitting is visible
     results.sort(key=lambda r: r.train_sharpe or 0.0, reverse=True)
     return results
+
+
+def _normalize_param_value(v):
+    """Coerce integral floats to int (JSON floats arrive as 3.0; kernels expect int lengths)."""
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return v
+
+
+@dataclass(slots=True)
+class HeatmapPoint:
+    x: float
+    y: float
+    value: float | None = None
+    trades: int | None = None
+
+
+def run_heatmap(
+    definition: StrategyDefinition,
+    candles: list[Candle],
+    x_key: str,
+    x_values: list,
+    y_key: str,
+    y_values: list,
+    metric: str = "sharpe_ratio",
+    config: OptConfig | None = None,
+) -> list[HeatmapPoint]:
+    """Backtest every (x, y) parameter combination for a 2D sensitivity surface.
+
+    Points whose backtest fails carry value=None so the UI can grey them out.
+    """
+    cfg = config or OptConfig()
+    if len(x_values) * len(y_values) > 625:
+        raise OptimizerError("Heatmap too large: max 25x25 combinations")
+
+    points: list[HeatmapPoint] = []
+    for xv in x_values:
+        for yv in y_values:
+            xv_n = _normalize_param_value(xv)
+            yv_n = _normalize_param_value(yv)
+            params = {x_key: xv_n, y_key: yv_n}
+            try:
+                defn = apply_params(definition, params)
+                bt = run_backtest(
+                    defn, candles,
+                    BacktestConfig(initial_capital=cfg.initial_capital, costs_pct=cfg.costs_pct),
+                )
+                points.append(HeatmapPoint(
+                    x=xv_n, y=yv_n,
+                    value=_metric_value(bt.summary, metric),
+                    trades=int(bt.summary.get("total_trades", 0)),
+                ))
+            except Exception:
+                points.append(HeatmapPoint(x=xv_n, y=yv_n))
+    return points

@@ -16,6 +16,7 @@ from app.api.v1 import (
     quant,
     strategies,
     strategies_polish,
+    tax,
 )
 
 api_router = APIRouter()
@@ -34,3 +35,4 @@ api_router.include_router(paper.router)
 api_router.include_router(forward_tests.router)
 api_router.include_router(optimizations.router)
 api_router.include_router(calendar.router)
+api_router.include_router(tax.router)

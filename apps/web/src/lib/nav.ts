@@ -45,6 +45,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Data Manager", href: "/tools/data-manager" },
       { label: "Paper Accounts", href: "/tools/paper-accounts" },
       { label: "Execution", href: "/tools/execution" },
+      { label: "Tax Report", href: "/tools/tax-report" },
       { label: "Optimization", href: "/optimization" },
       { label: "Settings", href: "/tools/settings" },
     ],
