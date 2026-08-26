@@ -936,6 +936,39 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
 
   // strategies
   if (pathOnly === "/strategies" && method === "GET") return ok(strategies);
+  if (pathOnly === "/strategies/explore" && method === "GET") {
+    // Compact mirror of the backend explore catalog for offline browsing
+    const catDefs = [
+      { id: "all", label: "All", description: "Every prebuilt algo", count: mockTemplates().length },
+      { id: "option-buying", label: "Option Buying", description: "Debit spreads & long gamma plays" },
+      { id: "credit-spread", label: "Credit Spread", description: "Range-bound premium collection" },
+      { id: "short-straddle", label: "Short Straddle", description: "ATM volatility selling" },
+      { id: "short-strangle", label: "Short Strangle", description: "OTM wings, wider breakevens" },
+      { id: "expiry-day", label: "Expiry Day", description: "Weekly expiry special situations" },
+      { id: "intraday", label: "Intraday", description: "5m–15m index scalping systems" },
+      { id: "swing", label: "Swing", description: "Daily-timeframe trend riding" },
+    ];
+    const catOf = (t: { tags: string[] }): string => {
+      if (t.tags.includes("weekly")) return "expiry-day";
+      if (t.tags.includes("credit")) return t.tags.includes("range") || t.tags.includes("spread") ? "credit-spread" : "short-straddle";
+      return "option-buying";
+    };
+    const algos = mockTemplates().map((t, i) => ({
+      id: `mock-algo-${i}`,
+      name: t.name,
+      category: t.tags.includes("intraday") ? "intraday" : catOf(t),
+      description: t.description,
+      tags: t.tags,
+      complexity: t.tags.includes("ratio") || t.tags.includes("volatility") ? "advanced" : "intermediate",
+      min_capital: 65_000 + i * 5_000,
+      underlying: (t.definition as { instrument?: { symbol?: string } })?.instrument?.symbol ?? "NIFTY",
+      definition: t.definition,
+    }));
+    const withCounts = catDefs.map((c) =>
+      c.id === "all" ? c : { ...c, count: algos.filter((a) => a.category === c.id).length }
+    );
+    return ok({ categories: withCounts, algos, total: algos.length });
+  }
   if (pathOnly === "/strategies/templates" && method === "GET") return ok(mockTemplates());
   if (pathOnly === "/strategies" && method === "POST") {
     const body = JSON.parse((init.body as string) ?? "{}");

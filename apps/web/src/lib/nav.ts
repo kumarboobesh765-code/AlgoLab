@@ -14,6 +14,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "Main",
     items: [
       { label: "Dashboard", href: "/" },
+      { label: "Explore Algos", href: "/explore" },
       { label: "Strategies", href: "/strategies" },
       { label: "Backtest", href: "/backtest" },
       { label: "Trade Replay", href: "/replay" },

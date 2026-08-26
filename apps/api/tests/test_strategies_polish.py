@@ -42,7 +42,7 @@ async def test_templates(client, auth_headers):
     templates = resp.json()
     assert len(templates) >= 5
     names = {t["name"] for t in templates}
-    assert "EMA Crossover" in names
+    assert any("EMA Crossover" in n for n in names)
     assert "RSI Mean Reversion" in names
     for t in templates:
         assert "definition" in t

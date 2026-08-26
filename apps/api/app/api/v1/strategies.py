@@ -13,9 +13,22 @@ from app.schemas.strategy import (
     StrategyVersionOut,
     VersionCreate,
 )
-from app.templates import get_templates
+from app.templates import get_explore, get_templates
 
 router = APIRouter(tags=["strategies"])
+
+
+@router.get("/strategies/explore")
+async def explore_catalog(category: str | None = None):
+    """Prebuilt algo gallery with category facets (Stratzy-style explore)."""
+    data = get_explore()
+    if category and category != "all":
+        data = {
+            **data,
+            "algos": [a for a in data["algos"] if a["category"] == category],
+        }
+        data["total"] = len(data["algos"])
+    return data
 
 
 @router.get("/strategies/templates")
