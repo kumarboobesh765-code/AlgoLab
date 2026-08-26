@@ -33,6 +33,12 @@ import type {
   PayoffResponse,
   MonteCarloResponse,
   AiDraftResponse,
+  ExecutionOrder,
+  ExecutionPosition,
+  PlaceOrderRequest,
+  RegisteredAlgoOut,
+  DeploymentOut,
+  BracketOut,
 } from "./api";
 
 // ---------------------------------------------------------------------------
@@ -1150,6 +1156,255 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
       cells,
       best,
       worst,
+    });
+  }
+
+  // ---- execution (mock broker session) ----
+  const execInit = {
+    brokers: ["mock", "zerodha", "fyers", "upstox", "angelone", "dhan"],
+    orders: [] as ExecutionOrder[],
+    positions: [] as ExecutionPosition[],
+    pending: [] as { id: string; req: PlaceOrderRequest; created_at: string }[],
+    algos: [] as RegisteredAlgoOut[],
+    deployments: [] as DeploymentOut[],
+    brackets: [] as BracketOut[],
+    confirmRequired: false,
+    killSwitch: false,
+    seq: 0,
+  };
+  let mExec = pathOnly.match(/^\/execution\/orders\/([^/]+)\/confirm$/);
+  if (mExec && method === "POST") {
+    const idx = execInit.pending.findIndex((p) => p.id === mExec![1]);
+    if (idx === -1) return err(404, "Unknown pending order");
+    const p = execInit.pending.splice(idx, 1)[0];
+    execInit.seq += 1;
+    const order: ExecutionOrder = {
+      order_id: p.id,
+      broker_order_id: `MOCK${String(execInit.seq).padStart(6, "0")}`,
+      symbol: p.req.symbol, exchange: p.req.exchange, segment: p.req.segment,
+      side: p.req.side, order_type: p.req.order_type, product: p.req.product ?? "MIS",
+      quantity: p.req.quantity, price: p.req.price ?? 0,
+      trigger_price: p.req.trigger_price ?? 0,
+      filled_quantity: p.req.quantity, pending_quantity: 0,
+      status: "COMPLETE", average_price: p.req.price ?? 100,
+      tag: p.req.tag ?? null, rejection_reason: null,
+    };
+    execInit.orders.unshift(order);
+    return ok(order);
+  }
+  mExec = pathOnly.match(/^\/execution\/orders\/([^/]+)\/discard$/);
+  if (mExec && method === "POST") {
+    const idx = execInit.pending.findIndex((p) => p.id === mExec![1]);
+    if (idx === -1) return err(404, "Unknown pending order");
+    execInit.pending.splice(idx, 1);
+    return ok({ discarded: true, pending_id: mExec[1] });
+  }
+  if (pathOnly === "/execution/orders/pending/list" && method === "GET") {
+    return ok(execInit.pending.map((p) => ({
+      pending_id: p.id, symbol: p.req.symbol, exchange: p.req.exchange,
+      segment: p.req.segment, side: p.req.side, order_type: p.req.order_type,
+      quantity: p.req.quantity, price: p.req.price ?? 0,
+      trigger_price: p.req.trigger_price ?? 0, created_at: p.created_at,
+    })));
+  }
+  if (pathOnly === "/execution/orders/place" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}") as PlaceOrderRequest;
+    if (execInit.killSwitch) return err(422, JSON.stringify({ risk_violations: ["Kill switch is engaged"] }));
+    if (execInit.confirmRequired) {
+      execInit.seq += 1;
+      const pid = `PEND_${String(execInit.seq).padStart(6, "0")}`;
+      execInit.pending.push({ id: pid, req: body, created_at: isoDate(new Date()) });
+      return ok({ order_id: pid, broker_order_id: "", symbol: body.symbol, exchange: body.exchange, segment: body.segment, side: body.side, order_type: body.order_type, product: body.product ?? "MIS", quantity: body.quantity, price: body.price ?? 0, trigger_price: body.trigger_price ?? 0, filled_quantity: 0, pending_quantity: body.quantity, status: "PENDING", average_price: 0, tag: body.tag ?? null, rejection_reason: null });
+    }
+    execInit.seq += 1;
+    const order: ExecutionOrder = {
+      order_id: `MOCK${String(execInit.seq).padStart(6, "0")}`,
+      broker_order_id: `BRK${String(execInit.seq).padStart(6, "0")}`,
+      symbol: body.symbol, exchange: body.exchange, segment: body.segment,
+      side: body.side, order_type: body.order_type, product: body.product ?? "MIS",
+      quantity: body.quantity, price: body.price ?? 0,
+      trigger_price: body.trigger_price ?? 0,
+      filled_quantity: body.order_type === "MARKET" ? body.quantity : 0,
+      pending_quantity: body.order_type === "MARKET" ? 0 : body.quantity,
+      status: body.order_type === "MARKET" ? "COMPLETE" : "OPEN",
+      average_price: body.order_type === "MARKET" ? (body.price || 22000) : 0,
+      tag: body.tag ?? null, rejection_reason: null,
+    };
+    execInit.orders.unshift(order);
+    return ok(order);
+  }
+  mExec = pathOnly.match(/^\/execution\/orders\/([^/]+)\/cancel$/);
+  if (mExec && method === "POST") {
+    const o = execInit.orders.find((x) => x.order_id === mExec![1] || x.broker_order_id === mExec![1]);
+    if (!o) return err(404, "Order not found");
+    o.status = "CANCELLED";
+    return ok(o);
+  }
+  if (pathOnly === "/execution/risk" && method === "GET") {
+    return ok({
+      kill_switch: execInit.killSwitch,
+      max_order_notional: 1_000_000, max_position_notional: 5_000_000,
+      max_orders_per_day: 500, orders_today: execInit.orders.length,
+      daily_pnl: 0, max_daily_loss: 200_000,
+      ops_limit: 10, ops_current: 0,
+      orders_placed: execInit.orders.length, trades_executed: execInit.orders.filter((o) => o.status === "COMPLETE").length,
+      order_to_trade_ratio: null,
+    });
+  }
+  mExec = pathOnly.match(/^\/execution\/risk\/kill/);
+  if (mExec && method === "POST") {
+    execInit.killSwitch = params.get("engaged") === "true";
+    return ok({ kill_switch: execInit.killSwitch });
+  }
+  if (pathOnly === "/execution/risk/confirm-mode" && method === "POST") {
+    execInit.confirmRequired = params.get("enabled") === "true";
+    return ok({ kill_switch: execInit.killSwitch, confirm_required: execInit.confirmRequired });
+  }
+  if (pathOnly === "/execution/funds" && method === "GET") {
+    return ok({ equity: 1_000_000, commodity: 0, used_margin: 45_000, available_cash: 955_000, collateral: 0 });
+  }
+  if (pathOnly === "/execution/orders" && method === "GET") return ok(execInit.orders);
+  if (pathOnly === "/execution/positions" && method === "GET") {
+    return ok(execInit.positions);
+  }
+  if (pathOnly === "/execution/quotes" && method === "GET") {
+    const syms = (params.get("symbols") ?? "").split(",").filter(Boolean);
+    return ok(syms.map((s) => ({ symbol: s.toUpperCase(), last_price: 22000 + s.length * 10, bid: 21998, ask: 22002, volume: 120000, oi: 50000, change: 105.5, change_pct: 0.48 })));
+  }
+  if (pathOnly === "/execution/audit" && method === "GET") {
+    return ok(execInit.orders.slice(0, 10).map((o) => ({ timestamp: isoDate(new Date()), action: "ORDER_PLACED", detail: `${o.side} ${o.quantity} ${o.symbol}`, broker_order_id: o.broker_order_id, user: "mock" })));
+  }
+  mExec = pathOnly.match(/^\/execution\/algo\/register$/);
+  if (mExec && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const algo: RegisteredAlgoOut = {
+      algo_id: `ALGO_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      name: String(body.name ?? "Strategy Algo"), segment: String(body.segment ?? "EQUITY"),
+      exchange: String(body.exchange ?? "NSE"), strategy_id: body.strategy_id ?? null,
+      active: true, registered_at: isoDate(new Date()),
+    };
+    execInit.algos.push(algo);
+    return ok(algo);
+  }
+  if (pathOnly === "/execution/algo/registered" && method === "GET") return ok(execInit.algos);
+  mExec = pathOnly.match(/^\/execution\/algo\/deactivate$/);
+  if (mExec && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const algo = execInit.algos.find((a) => a.algo_id === body.algo_id);
+    if (!algo) return err(404, "Algo not found");
+    algo.active = false;
+    return ok({ deactivated: true });
+  }
+  if (pathOnly === "/execution/algos" && method === "GET") {
+    return ok([]);
+  }
+  if (pathOnly === "/execution/orders/algo" && method === "POST") {
+    return err(400, "Algo parent orders are not simulated in mock mode");
+  }
+  if (pathOnly === "/execution/orders/bracket" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const bracket: BracketOut = {
+      bracket_id: `BRK_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      entry_order_id: `MOCK${String(++execInit.seq).padStart(6, "0")}`,
+      target_price: Number(body.target_price ?? 0),
+      stop_loss_price: Number(body.stop_loss_price ?? 0),
+      armed: true, done: false,
+    };
+    execInit.brackets.push(bracket);
+    return ok(bracket);
+  }
+  if (pathOnly === "/execution/brackets" && method === "GET") return ok(execInit.brackets);
+  if (pathOnly === "/execution/orders/process-fills" && method === "POST") return ok([]);
+  if (pathOnly === "/execution/deploy" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const dep: DeploymentOut = {
+      deployment_id: `DEP_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      strategy_id: String(body.strategy_id ?? ""), algo_id: `ALGO_${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      broker: String(body.broker ?? "mock"), mode: String(body.mode ?? "paper"),
+      name: String(body.name ?? "Deployment"), segment: String(body.segment ?? "EQUITY"),
+      exchange: String(body.exchange ?? "NSE"), active: true,
+      created_at: isoDate(new Date()),
+    };
+    execInit.deployments.push(dep);
+    return ok(dep);
+  }
+  if (pathOnly === "/execution/deployments" && method === "GET") return ok(execInit.deployments);
+
+  // ---- options analytics (derived from the synthetic chain) ----
+  if (pathOnly === "/options/analytics" && method === "GET") {
+    const chain = mockOptionChain(params.get("underlying") ?? "NIFTY", params.get("expiry") ?? undefined);
+    const strikes = chain.strikes;
+    const totalCallOi = strikes.reduce((s2, r) => s2 + r.call_oi, 0);
+    const totalPutOi = strikes.reduce((s2, r) => s2 + r.put_oi, 0);
+    const totalCallVol = strikes.reduce((s2, r) => s2 + r.call_volume, 0);
+    const totalPutVol = strikes.reduce((s2, r) => s2 + r.put_volume, 0);
+    const strikePcr: Record<string, number> = {};
+    for (const r of strikes) strikePcr[String(r.strike)] = r.call_oi > 0 ? Math.round((r.put_oi / r.call_oi) * 100) / 100 : 0;
+
+    // Max pain: strike where total writer payout is minimized
+    let maxPainStrike = strikes[0]?.strike ?? chain.spot;
+    let minPain = Number.POSITIVE_INFINITY;
+    const painByStrike: Record<string, number> = {};
+    for (const candidate of strikes) {
+      let pain = 0;
+      for (const r of strikes) {
+        pain += r.call_oi * Math.max(chain.spot - r.strike, 0);
+        pain += r.put_oi * Math.max(r.strike - chain.spot, 0);
+      }
+      painByStrike[String(candidate.strike)] = Math.round(pain);
+      if (pain < minPain) { minPain = pain; maxPainStrike = candidate.strike; }
+    }
+    const byOiDesc = [...strikes].sort((a, b) => b.call_oi + b.put_oi - (a.call_oi + a.put_oi));
+    const atmRow = strikes.reduce((best, r) =>
+      Math.abs(r.strike - chain.spot) < Math.abs(best.strike - chain.spot) ? r : best, strikes[0]);
+    const atmIv = atmRow ? (atmRow.call_iv + atmRow.put_iv) / 2 : 14;
+    const avgCe = strikes.reduce((s2, r) => s2 + r.call_iv, 0) / (strikes.length || 1);
+    const avgPe = strikes.reduce((s2, r) => s2 + r.put_iv, 0) / (strikes.length || 1);
+
+    return ok({
+      underlying: chain.underlying, spot: chain.spot, expiry: chain.expiry,
+      pcr: {
+        pcr_oi: totalCallOi > 0 ? Math.round((totalPutOi / totalCallOi) * 100) / 100 : 0,
+        pcr_volume: totalCallVol > 0 ? Math.round((totalPutVol / totalCallVol) * 100) / 100 : 0,
+        total_call_oi: totalCallOi, total_put_oi: totalPutOi,
+        total_call_volume: totalCallVol, total_put_volume: totalPutVol,
+        strike_pcr: strikePcr,
+      },
+      max_pain: {
+        max_pain_strike: maxPainStrike, min_pain: minPain,
+        support_resistance: {
+          resistance: byOiDesc.slice(0, 3).map((r) => ({ strike: r.strike, oi: r.call_oi, type: "CALL" })),
+          support: byOiDesc.slice(0, 3).map((r) => ({ strike: r.strike, oi: r.put_oi, type: "PUT" })),
+        },
+        pain_by_strike: painByStrike,
+      },
+      iv_surface: {
+        atm_iv: Math.round(atmIv * 100) / 100,
+        skew: Math.round((avgPe - avgCe) * 100) / 100,
+        kurtosis: 0.12,
+        points: strikes.slice(0, 10).map((r) => ({
+          strike: r.strike, expiry: chain.expiry, days_to_expiry: 7,
+          iv: (r.call_iv + r.put_iv) / 2,
+          delta: (r.call_delta - r.put_delta) / 2,
+          moneyness: Math.round(((r.strike / chain.spot) - 1) * 10000) / 10000,
+        })),
+      },
+      greeks_heatmap: {
+        net_delta: Math.round(strikes.reduce((s2, r) => s2 + r.call_delta + r.put_delta, 0) * 100) / 100,
+        net_gamma: Math.round(strikes.reduce((s2, r) => s2 + r.call_gamma + r.put_gamma, 0) * 100) / 100,
+        net_theta: Math.round(strikes.reduce((s2, r) => s2 + r.call_theta + r.put_theta, 0) * 100) / 100,
+        net_vega: Math.round(strikes.reduce((s2, r) => s2 + r.call_vega + r.put_vega, 0) * 100) / 100,
+        strike_greeks: Object.fromEntries(strikes.slice(0, 10).map((r) => [String(r.strike), {
+          call_oi: r.call_oi, put_oi: r.put_oi,
+          delta: r.call_delta, gamma: r.call_gamma, theta: r.call_theta, vega: r.call_vega,
+          call_delta: r.call_delta, put_delta: r.put_delta,
+        }])),
+      },
+      iv_rank_percentile: {
+        iv_rank: 42, iv_percentile: 55,
+        current_iv: Math.round(atmIv * 100) / 100,
+        iv_52w_high: 26.4, iv_52w_low: 9.8,
+      },
     });
   }
 
