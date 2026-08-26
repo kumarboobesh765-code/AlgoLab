@@ -241,3 +241,16 @@ class DeploymentOut(BaseModel):
     exchange: str
     active: bool
     created_at: str
+
+
+class PendingOrderOut(BaseModel):
+    pending_id: str
+    symbol: str
+    exchange: str
+    segment: str
+    side: str
+    order_type: str
+    quantity: int
+    price: float
+    trigger_price: float
+    created_at: str

@@ -71,12 +71,17 @@ class OptionsConfig:
     auto_roll: bool = True  # Auto-roll expiring positions
 
 
-def _leg_costs(price: float, qty: float, is_sell: bool) -> dict:
+def _leg_costs(price: float, qty: float, is_sell: bool, trade_date: date | None = None) -> dict:
     """Indian F&O per-fill cost breakdown (INR).
-    STT applies on the sell side only (0.0625% of premium).
+
+    STT applies on the sell side only — date-aware per Budget 2026:
+    0.10% of premium before Apr 1 2026, 0.15% on/after.
     """
+    from app.services.market_calendar import stt_options_sell
+
+    d = trade_date or date.today()
     notional = abs(qty) * price
-    stt = 0.000625 * notional if is_sell else 0.0
+    stt = stt_options_sell(notional, d) if is_sell else 0.0
     stamp = 0.0003 * notional
     exchange = 0.0005 * notional
     sebi = 0.000001 * notional
@@ -143,6 +148,7 @@ def run_options_backtest(
     definition: StrategyDefinition,
     candles: Sequence[Candle],
     config: OptionsConfig | None = None,
+    leg_premium_lookup: list[dict[date, float]] | None = None,
 ) -> OptionsBacktestResult:
     """Run backtest for options strategy.
 
@@ -150,11 +156,21 @@ def run_options_backtest(
         definition: Strategy definition with legs
         candles: Historical underlying candles
         config: Options backtest configuration
+        leg_premium_lookup: Optional per-leg {date -> real premium close} maps
+            (from expired-options history). When present for a leg/date, real
+            traded premiums mark the position; Black-Scholes is the fallback.
 
     Returns:
         OptionsBacktestResult with leg P&L and summary
     """
     cfg = config or OptionsConfig()
+    lookup = leg_premium_lookup or []
+
+    def _real(j: int, d: date) -> float | None:
+        if j < len(lookup) and lookup[j]:
+            return lookup[j].get(d)
+        return None
+
     if len(candles) < 2:
         raise OptionsBacktestError("Need at least 2 candles")
 
@@ -266,7 +282,10 @@ def run_options_backtest(
             for j, leg in enumerate(resolved_legs):
                 if leg_entries[j] is None:
                     dte = days_to_expiry(current_date, leg["expiry"])
-                    price = _calculate_leg_price(spot, leg["strike"], dte, cfg.volatility, leg["option_type"])
+                    real = _real(j, current_date)
+                    price = real if real is not None else _calculate_leg_price(
+                        spot, leg["strike"], dte, cfg.volatility, leg["option_type"]
+                    )
                     leg_entries[j] = {
                         "action": resolved_legs[j]["action"],
                         "option_type": resolved_legs[j]["option_type"],
@@ -285,9 +304,13 @@ def run_options_backtest(
         for j, entry in enumerate(leg_entries):
             if entry is not None:
                 dte = days_to_expiry(current_date, entry["expiry"])
-                current_price = black_scholes_price(
-                    spot, entry["strike"], dte, cfg.volatility,
-                    rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
+                real = _real(j, current_date)
+                current_price = (
+                    real if real is not None
+                    else black_scholes_price(
+                        spot, entry["strike"], dte, cfg.volatility,
+                        rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
+                    )
                 )
                 qty = entry["lots"] * cfg.lot_size
                 if entry["action"] == "sell":
@@ -308,9 +331,13 @@ def run_options_backtest(
             final_spot = spot_prices[-1]
             final_date = timestamps[-1].date() if hasattr(timestamps[-1], 'date') else date.today()
             dte = days_to_expiry(final_date, entry["expiry"])
-            exit_price = black_scholes_price(
-                final_spot, entry["strike"], dte, cfg.volatility,
-                rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
+            real = _real(j, final_date)
+            exit_price = (
+                real if real is not None
+                else black_scholes_price(
+                    final_spot, entry["strike"], dte, cfg.volatility,
+                    rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
+                )
             )
             qty = entry["lots"] * cfg.lot_size
             if entry["action"] == "sell":

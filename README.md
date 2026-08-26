@@ -59,6 +59,9 @@ A professional Indian-market algorithmic trading **research platform**.
 | **Multi-symbol scanner API** (`POST /quant/scan`): one definition across up to 50 symbols on stored candles, ranked by signal recency | ✅ |
 | **Expired-options history** (`GET /options/expired-history`, DhanHQ v2.2): real option-premium candles for leg backtesting | ✅ |
 | **Backtest slippage** (`slippage_pct`): adverse per-side fill adjustment — entries pay more, exits receive less | ✅ |
+| **Real option premiums in backtests** (`use_real_premiums`): marks from DhanHQ expired-options history with Black-Scholes fallback per leg/date | ✅ |
+| **Execution confirm-mode**: stage orders for manual approval (`/orders/{id}/confirm`, `/discard`, `/risk/confirm-mode`) — paper → confirm → auto gradient | ✅ |
+| **OAuth broker flows** (Zerodha Kite / Fyers / Upstox): authorization-URL builders + code→token exchange (mock-tested, LIVE-VERIFY) | ✅ |
 | **Prometheus-style metrics** (`GET /api/v1/metrics`): request counts by method/path/status + latency sums, zero dependencies | ✅ |
 | **UX polish**: toast notifications, dark/light theme toggle (persisted), mobile-responsive sidebar drawer, dashboard onboarding checklist | ✅ |
 | **Strategy sharing**: copy a shareable link (`?import=<base64url>`) that imports the strategy into another account | ✅ |
@@ -168,7 +171,7 @@ See [.env.example](.env.example). Key values:
 
 ```powershell
 cd apps/api
-uv run pytest -v        # 317 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine, backtest engine + API + replay candles, paper engine, optimizer + heatmap, forward-test API, AI drafting, alerts, market calendar, tax report, metrics
+uv run pytest -v        # 345 tests: auth, strategies, polish endpoints, providers, ingestion, quant engine + scan, backtest engine + slippage, options engine + real premiums, paper engine, optimizer + heatmap, forward-test API, AI drafting, alerts, market calendar, tax report, metrics, SEBI compliance (OPS/OTR), confirm mode, OAuth
 cd apps/web
 npm run lint            # ESLint (react-hooks, next)
 npm run build           # type-check + production build of all 25 routes

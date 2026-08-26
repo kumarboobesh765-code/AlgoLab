@@ -68,6 +68,17 @@ class BracketParent:
     done: bool = False
 
 
+@dataclass
+class PendingOrder:
+    """An order staged for manual confirmation (Tradetron-style gradient)."""
+
+    pending_id: str
+    request: OrderRequest
+    created_at: datetime = field(default_factory=datetime.now)
+    ref_price: float | None = None
+    strategy_tag: str | None = None
+
+
 class OrderManager:
     """Stateful order manager bound to a single broker gateway."""
 
@@ -91,6 +102,8 @@ class OrderManager:
         self.limiter = get_rate_limiter()  # SEBI OPS cap, shared per process
         self.otr = OTRTracker()
         self._counted_fills: dict[str, int] = {}
+        self.confirm_required: bool = False
+        self._pending: dict[str, PendingOrder] = {}
 
     # -- audit ---------------------------------------------------------------
 
@@ -146,9 +159,26 @@ class OrderManager:
         request: OrderRequest,
         ref_price: float | None = None,
         strategy_tag: str | None = None,
+        _confirmed: bool = False,
     ) -> OrderResponse:
         if not await self.gateway.is_connected():
             await self.gateway.connect()
+
+        # Confirm-mode gate (Tradetron-style execution gradient): stage the
+        # order for manual approval instead of routing it.
+        if self.confirm_required and not _confirmed:
+            pid = f"PEND_{uuid.uuid4().hex[:10]}"
+            self._pending[pid] = PendingOrder(
+                pending_id=pid, request=request, ref_price=ref_price,
+                strategy_tag=strategy_tag,
+            )
+            self._log("ORDER_PENDING_CONFIRM", f"{request.side.value} {request.quantity} {request.symbol}", pid)
+            return OrderResponse(
+                order_id=pid,
+                broker_order_id="",
+                status=OrderStatus.PENDING,
+                message=f"Order staged as {pid} — awaiting confirmation",
+            )
 
         # Market orders have no price; fetch a reference price for sizing/risk.
         ref = ref_price
@@ -214,6 +244,34 @@ class OrderManager:
             self.otr.record_order()
             self._log("ORDER_PLACED", f"{req.side.value} {req.quantity} {req.symbol}", resp.broker_order_id)
         return resp
+
+    # -- confirm-mode management ----------------------------------------------
+
+    def list_pending(self) -> list[PendingOrder]:
+        return list(self._pending.values())
+
+    async def confirm_pending(self, pending_id: str) -> OrderResponse:
+        """Execute a staged order (bypasses the confirm gate exactly once)."""
+        pending = self._pending.pop(pending_id, None)
+        if pending is None:
+            return OrderResponse(
+                order_id=pending_id, broker_order_id="",
+                status=OrderStatus.REJECTED, message="Unknown or already-handled pending order",
+            )
+        self._log("ORDER_CONFIRMED", f"{pending.request.side.value} {pending.request.quantity} {pending.request.symbol}", pending_id)
+        return await self.submit_order(
+            pending.request,
+            ref_price=pending.ref_price,
+            strategy_tag=pending.strategy_tag,
+            _confirmed=True,
+        )
+
+    def discard_pending(self, pending_id: str) -> bool:
+        pending = self._pending.pop(pending_id, None)
+        if pending is None:
+            return False
+        self._log("ORDER_DISCARDED", f"{pending.request.side.value} {pending.request.quantity} {pending.request.symbol}", pending_id)
+        return True
 
     # -- execution algorithms -------------------------------------------------
 

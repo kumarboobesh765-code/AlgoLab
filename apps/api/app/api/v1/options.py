@@ -268,6 +268,48 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
     except OptionsBacktestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    # Real-premium pass: when every leg names an explicit strike+expiry and the
+    # provider exposes expired-options history, refetch actual premium candles
+    # per contract and re-run so marks come from traded prices, not BS.
+    premium_source = "bs"
+    if request.use_real_premiums:
+        fn = getattr(provider, "get_expired_option_history", None)
+        concrete = all(
+            leg_req.get("strike") is not None and leg_req.get("expiry")
+            for leg_req in request.legs
+        )
+        if fn is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Provider '{provider.name}' does not support expired options history",
+            )
+        if not concrete:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="use_real_premiums requires explicit strike and expiry on every leg",
+            )
+        from datetime import date as _date
+        try:
+            lookups: list[dict[_date, float]] = []
+            for leg_req in request.legs:
+                prem = await fn(
+                    underlying=request.underlying.upper(),
+                    strike=float(leg_req["strike"]),
+                    option_type=str(leg_req.get("option_type", "CE")),
+                    expiry=_date.fromisoformat(str(leg_req["expiry"])),
+                    interval="1d",
+                    start=datetime.combine(start_date, datetime.min.time()),
+                    end=datetime.combine(end_date, datetime.max.time()),
+                )
+                lookups.append({c.timestamp.date(): c.close for c in prem})
+            result = run_options_backtest(definition, candle_list, cfg, leg_premium_lookup=lookups)
+            premium_source = "real" if any(lookups) else "bs"
+        except Exception as exc:  # noqa: BLE001 - missing contracts fall back to BS
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Real-premium fetch failed: {exc}",
+            ) from exc
+
     leg_outs = [
         OptionsLegPnLOut(
             leg_index=leg.leg_index,
@@ -294,6 +336,7 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
         daily_values=result.daily_values,
         summary=result.summary,
         cost_breakdown=result.cost_breakdown,
+        premium_source=premium_source,
     )
 
 

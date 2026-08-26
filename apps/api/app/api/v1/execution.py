@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.core.config import get_settings
 from app.core.deps import CurrentUser
 from app.execution import list_brokers
-from app.execution.gateway import OrderRequest, Validity
+from app.execution.gateway import OrderRequest, OrderStatus, Validity
 from app.execution.oms import get_order_manager
 from app.execution.risk import RiskViolation
 from app.schemas.execution import (
@@ -29,6 +29,7 @@ from app.schemas.execution import (
     DeployRequest,
     FundsOut,
     OrderOut,
+    PendingOrderOut,
     PlaceOrderRequest,
     PositionOut,
     RegisteredAlgoOut,
@@ -128,6 +129,27 @@ async def place_order(req: PlaceOrderRequest, user: CurrentUser, request: Reques
     orders = await mgr.get_orders()
     match = next((o for o in orders if o.broker_order_id == resp.broker_order_id), None)
     if match is None:
+        if resp.status == OrderStatus.PENDING and resp.order_id.startswith("PEND_"):
+            # Staged by confirm-mode: synthesize the response from the request
+            return OrderOut(
+                order_id=resp.order_id,
+                broker_order_id="",
+                symbol=req.symbol,
+                exchange=req.exchange,
+                segment=req.segment,
+                side=req.side,
+                order_type=req.order_type,
+                product=req.product,
+                quantity=req.quantity,
+                price=req.price,
+                trigger_price=req.trigger_price or 0,
+                filled_quantity=0,
+                pending_quantity=req.quantity,
+                status="PENDING",
+                average_price=0,
+                tag=req.tag,
+                rejection_reason=None,
+            )
         # Mock gateway stores locally; surface minimal info
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Order not mirrored")
     return _order_out(match)
@@ -450,3 +472,68 @@ async def list_deployments(user: CurrentUser) -> list[DeploymentOut]:
         )
         for d in reg.list_deployments()
     ]
+
+
+# ---- confirm-mode (execution gradient: paper -> confirm -> auto) -----------
+
+
+def _pending_out(p) -> PendingOrderOut:
+    return PendingOrderOut(
+        pending_id=p.pending_id,
+        symbol=p.request.symbol,
+        exchange=p.request.exchange.value,
+        segment=p.request.segment.value,
+        side=p.request.side.value,
+        order_type=p.request.order_type.value,
+        quantity=p.request.quantity,
+        price=p.request.price,
+        trigger_price=p.request.trigger_price,
+        created_at=p.created_at.isoformat(),
+    )
+
+
+@router.get("/orders/pending/list", response_model=list[PendingOrderOut])
+async def list_pending_orders(user: CurrentUser, broker: str = "mock") -> list[PendingOrderOut]:
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    return [_pending_out(p) for p in mgr.list_pending()]
+
+
+@router.post("/orders/{pending_id}/confirm", response_model=OrderOut)
+async def confirm_pending_order(
+    pending_id: str, user: CurrentUser, broker: str = "mock", request: Request = None
+) -> OrderOut:
+    if request is not None:
+        _require_whitelisted_ip(request)
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    resp = await mgr.confirm_pending(pending_id)
+    orders = await mgr.get_orders()
+    match = next((o for o in orders if o.broker_order_id == resp.broker_order_id), None)
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=resp.message or "Not mirrored")
+    return _order_out(match)
+
+
+@router.post("/orders/{pending_id}/discard")
+async def discard_pending_order(
+    pending_id: str, user: CurrentUser, broker: str = "mock", request: Request = None
+) -> dict:
+    if request is not None:
+        _require_whitelisted_ip(request)
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    ok = mgr.discard_pending(pending_id)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown pending order")
+    return {"discarded": True, "pending_id": pending_id}
+
+
+@router.post("/risk/confirm-mode")
+async def set_confirm_mode(
+    enabled: bool, user: CurrentUser, broker: str = "mock", request: Request = None
+) -> RiskStatusOut:
+    """Toggle the manual-confirmation gate for all new orders on this broker session."""
+    if request is not None:
+        _require_whitelisted_ip(request)
+    mgr = get_order_manager(broker, _broker_config(broker), user=user.email)
+    mgr.confirm_required = enabled
+    mgr._log("CONFIRM_MODE", f"enabled={enabled}")
+    return RiskStatusOut(**mgr.get_risk_status())

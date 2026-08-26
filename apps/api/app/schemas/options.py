@@ -157,6 +157,7 @@ class OptionsBacktestRequest(BaseModel):
     lot_size: int = Field(default=50, ge=1, le=10000)
     initial_capital: float = Field(default=100000, gt=0)
     auto_roll: bool = Field(default=True)
+    use_real_premiums: bool = Field(default=False)
 
 
 class OptionsLegPnLOut(BaseModel):
@@ -182,3 +183,4 @@ class OptionsBacktestResponse(BaseModel):
     daily_values: list[dict]
     summary: dict
     cost_breakdown: dict[str, float]
+    premium_source: str = "bs"  # "bs" | "real"

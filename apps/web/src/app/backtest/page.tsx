@@ -102,6 +102,7 @@ export default function BacktestPage() {
   // null = follow saved settings until the user edits the field
   const [capitalDraft, setCapitalDraft] = useState<string | null>(null);
   const [costsDraft, setCostsDraft] = useState<string | null>(null);
+  const [slippage, setSlippage] = useState("0");
   const capital = capitalDraft ?? String(savedSettings.defaultCapital);
   const costs = costsDraft ?? String(savedSettings.costsPct);
   const [running, setRunning] = useState(false);
@@ -154,6 +155,7 @@ export default function BacktestPage() {
           end,
           initial_capital: Number(capital) > 0 ? Number(capital) : savedSettings.defaultCapital,
           costs_pct: Number(costs) >= 0 ? Number(costs) : savedSettings.costsPct,
+          slippage_pct: Number(slippage) > 0 ? Number(slippage) : 0,
         }),
       });
       setRun(created);
@@ -242,6 +244,17 @@ export default function BacktestPage() {
               step="0.01"
               min="0"
               onChange={(e) => setCostsDraft(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
+            />
+          </label>
+          <label className="block text-xs font-medium text-slate-500" title="Adverse fill slippage per side — entries pay more, exits receive less">
+            Slippage % / side
+            <input
+              type="number"
+              value={slippage}
+              step="0.05"
+              min="0"
+              onChange={(e) => setSlippage(e.target.value)}
               className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
             />
           </label>
