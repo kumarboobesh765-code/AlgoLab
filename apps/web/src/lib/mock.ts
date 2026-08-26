@@ -1441,6 +1441,53 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
     });
   }
 
+  // ---- automation loop ----
+  if (pathOnly === "/automation" && method === "GET") return ok(autoStates);
+  if (pathOnly === "/automation/start" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const id = String(body.strategy_id ?? "");
+    let st = autoStates.find((a) => a.strategy_id === id);
+    if (!st) {
+      st = { strategy_id: id, broker: String(body.broker ?? "mock"), mode: String(body.mode ?? "paper"), runs: 0, orders_placed: 0, direction: null, last_message: "", last_run_at: null };
+      autoStates.push(st);
+    } else {
+      st.mode = String(body.mode ?? st.mode);
+      st.broker = String(body.broker ?? st.broker);
+    }
+    return ok({ started: true, state: st });
+  }
+  m = pathOnly.match(/^\/automation\/([^/]+)\/stop$/);
+  if (m && method === "POST") {
+    const idx = autoStates.findIndex((a) => a.strategy_id === m![1]);
+    if (idx === -1) return err(404, "No automation for that strategy");
+    autoStates.splice(idx, 1);
+    return ok({ stopped: true });
+  }
+  m = pathOnly.match(/^\/automation\/([^/]+)\/run-once$/);
+  if (m && method === "POST") {
+    const st = autoStates.find((a) => a.strategy_id === m![1]);
+    if (!st) return err(404, "Automation not started for this strategy");
+    const entry = rnd(`auto${st.runs}`)() > 0.5;
+    let actions: string[] = [];
+    if (st.direction && entry) {
+      actions = [`EXIT:COMPLETE:${st.broker} exit fill`];
+      st.direction = null;
+    } else if (!st.direction && entry) {
+      actions = [`BUY:COMPLETE:${st.broker} market fill`];
+      st.direction = "long";
+      st.orders_placed += 1;
+    }
+    st.runs += 1;
+    st.last_run_at = isoDate(new Date());
+    st.last_message = actions.length ? actions.join("; ") : `no action (entry=${entry}, dir=${st.direction})`;
+    return ok({
+      symbol: "NIFTY", bars_evaluated: 1200,
+      entry_signal: entry, exit_signal: !entry,
+      direction: st.direction, actions, message: st.last_message,
+      state: st,
+    });
+  }
+
   return err(404, `Mock has no handler for ${method} ${path}`);
 }
 

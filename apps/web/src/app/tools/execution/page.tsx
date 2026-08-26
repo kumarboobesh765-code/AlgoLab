@@ -24,6 +24,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { AutomationPanel } from "@/components/execution/AutomationPanel";
 
 const BROKERS = ["mock", "zerodha", "upstox", "angelone", "dhan", "fyers", "icici", "5paisa"];
 const EXCHANGES = ["NSE", "BSE", "NFO", "BFO", "MCX"];
