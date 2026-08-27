@@ -102,6 +102,11 @@ class LegPosition:
     reentry_on_sl: str | None = None
     reentry_on_target: str | None = None
     square_off: str = "partial"
+    # Momentum tracking
+    momentum_mode: str = "none"
+    momentum_value: float = 0.0
+    momentum_ref_price: float = 0.0
+    momentum_pending: bool = False
 
 
 @dataclass(slots=True)
@@ -156,12 +161,18 @@ def run_options_backtest(
     cash = initial_capital
     positions: list[LegPosition | None] = [None] * len(legs)
     pending_entries: list[bool] = [True] * len(legs)
+    momentum_waiting: list[bool] = [False] * len(legs)
     trades: list[LegTrade] = []
     equity_curve: list[dict] = []
     total_costs = 0.0
     overall_locked = 0.0
     overall_peak_pnl = 0.0
     iv = 0.20
+    daily_entry_count = 0
+    current_day = None
+    skip_candles = definition.skip_initial_candles or 0
+    max_daily = definition.max_position_in_a_day or 0
+    overall_reentry_pending = False
 
     def _leg_premium(S: float, strike: float, T: float, opt_type: str) -> float:
         return max(_bs_price(S, strike, T, iv, opt_type == "CE"), 0.01)
@@ -173,6 +184,24 @@ def run_options_backtest(
         strike = round(S / step) * step + strike_offset * step
         premium = _leg_premium(S, strike, T, leg.option_type)
         lots = leg.lots or 1
+
+        # Check momentum — if enabled, defer entry until premium moves by X
+        mom_mode = leg.momentum_mode or "none"
+        mom_val = leg.momentum_value or 0
+        if mom_mode != "none" and mom_val > 0 and not momentum_waiting[li]:
+            momentum_waiting[li] = True
+            positions[li] = LegPosition(
+                leg_index=li, action=leg.action, option_type=leg.option_type,
+                strike=strike, lots=lots, entry_index=i, entry_price=premium,
+                entry_underlying=S, sl_price=None, target_price=None,
+                max_reentries=leg.max_reentries or 0,
+                reentry_on_sl=leg.reentry_on_sl, reentry_on_target=leg.reentry_on_target,
+                square_off=leg.square_off or "partial",
+                momentum_mode=mom_mode, momentum_value=mom_val,
+                momentum_ref_price=premium, momentum_pending=True,
+            )
+            return
+
         cost = premium * lots * costs_pct / 100.0
         cash -= cost
         total_costs += cost
@@ -189,6 +218,8 @@ def run_options_backtest(
             max_reentries=leg.max_reentries or 0,
             reentry_on_sl=leg.reentry_on_sl, reentry_on_target=leg.reentry_on_target,
             square_off=leg.square_off or "partial",
+            momentum_mode=mom_mode, momentum_value=mom_val,
+            momentum_ref_price=premium, momentum_pending=False,
         )
 
     def _close_leg(li: int, bar, reason: str) -> None:
@@ -231,28 +262,96 @@ def run_options_backtest(
         bar_min = _bar_minutes(bar.timestamp)
         T = max((n - i) / (252 * (375 / 5)), 1 / 375)
 
+        # Track daily entry count
+        bar_day = bar.timestamp.date() if hasattr(bar.timestamp, "date") else None
+        if bar_day and bar_day != current_day:
+            current_day = bar_day
+            daily_entry_count = 0
+
+        # Skip initial candles
+        if i < skip_candles:
+            equity = cash
+            for pos in positions:
+                if pos is not None and not pos.momentum_pending:
+                    premium = _leg_premium(S, pos.strike, T, pos.option_type)
+                    diff = premium - pos.entry_price
+                    if pos.action == "sell":
+                        diff = -diff
+                    equity += diff * pos.lots
+            equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(equity, 2)})
+            continue
+
         no_entry = _parse_time_hm(time_cfg.no_entry_after) if time_cfg else None
         no_reentry = _parse_time_hm(time_cfg.no_reentry_after) if time_cfg else None
         force_exit = _parse_time_hm(time_cfg.time_exit) if time_cfg else None
 
         if force_exit and bar_min >= force_exit:
             for li in range(len(legs)):
-                if positions[li] is not None:
+                if positions[li] is not None and not positions[li].momentum_pending:
                     _close_leg(li, bar, "time_exit")
             equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(cash, 2)})
             continue
 
         for li in range(len(legs)):
+            pos = positions[li]
+            # Handle momentum waiting — check if premium moved enough
+            if pos is not None and pos.momentum_pending:
+                ref = pos.momentum_ref_price
+                mode = pos.momentum_mode
+                val = pos.momentum_value
+                triggered = False
+                if mode == "pts_up" and premium >= ref + val:
+                    triggered = True
+                elif mode == "pts_down" and premium <= ref - val:
+                    triggered = True
+                elif mode == "pct_up" and premium >= ref * (1 + val / 100):
+                    triggered = True
+                elif mode == "pct_down" and premium <= ref * (1 - val / 100):
+                    triggered = True
+                elif mode == "underlying_pts_up" and S >= pos.entry_underlying + val:
+                    triggered = True
+                elif mode == "underlying_pts_down" and S <= pos.entry_underlying - val:
+                    triggered = True
+                elif mode == "underlying_pct_up" and S >= pos.entry_underlying * (1 + val / 100):
+                    triggered = True
+                elif mode == "underlying_pct_down" and S <= pos.entry_underlying * (1 - val / 100):
+                    triggered = True
+                if triggered:
+                    momentum_waiting[li] = False
+                    pos.momentum_pending = False
+                    premium_now = _leg_premium(S, pos.strike, T, pos.option_type)
+                    cost = premium_now * pos.lots * costs_pct / 100.0
+                    cash -= cost
+                    total_costs += cost
+                    sl, tgt = _compute_sl_target(legs[li], premium_now, S, step)
+                    pos.entry_price = premium_now
+                    pos.entry_index = i
+                    pos.sl_price = sl
+                    pos.target_price = tgt
+                    trail_step_val = legs[li].trail_step or 0
+                    trail_by_val = legs[li].trail_by or 0
+                    pos.trail_active = bool(trail_by_val > 0 and trail_step_val > 0)
+                    pos.trail_step = trail_step_val
+                    pos.trail_trigger = trail_by_val
+                    pos.trail_extreme = premium_now
+                continue
+
+            # Normal entry for pending legs
             if pending_entries[li] and positions[li] is None:
                 if no_entry and bar_min >= no_entry:
                     pending_entries[li] = False
                     continue
+                if max_daily > 0 and daily_entry_count >= max_daily:
+                    pending_entries[li] = False
+                    continue
                 _open_leg(li, bar, S, T)
+                if positions[li] is not None and not positions[li].momentum_pending:
+                    daily_entry_count += 1
             pending_entries[li] = False
 
         for li in range(len(legs)):
             pos = positions[li]
-            if pos is None:
+            if pos is None or pos.momentum_pending:
                 continue
             premium = _leg_premium(S, pos.strike, T, pos.option_type)
             if pos.sl_price is not None:
@@ -288,10 +387,13 @@ def run_options_backtest(
                             pos.sl_price = new_sl
 
         if legwise and legwise.square_off_on_leg_sl:
-            sl_hit = any(t.exit_reason == "stop_loss" and t.exit_time == bar.timestamp for t in trades)
-            if sl_hit:
+            sl_or_tgt_hit = any(
+                t.exit_reason in ("stop_loss", "target") and t.exit_time == bar.timestamp
+                for t in trades
+            )
+            if sl_or_tgt_hit:
                 for li in range(len(legs)):
-                    if positions[li] is not None:
+                    if positions[li] is not None and not positions[li].momentum_pending:
                         _close_leg(li, bar, "square_off_propagation")
 
         if overall:
@@ -322,10 +424,31 @@ def run_options_backtest(
                     for li in range(len(legs)):
                         if positions[li] is not None:
                             _close_leg(li, bar, "overall_trail_sl")
+            # Overall re-entry after overall SL/target
+            overall_hit = any(
+                t.exit_reason in ("overall_sl", "overall_target") and t.exit_time == bar.timestamp
+                for t in trades
+            )
+            if overall_hit and not overall_reentry_pending:
+                reentry_mode = None
+                if any(t.exit_reason == "overall_sl" for t in trades if t.exit_time == bar.timestamp):
+                    reentry_mode = overall.overall_reentry_on_sl
+                elif any(t.exit_reason == "overall_target" for t in trades if t.exit_time == bar.timestamp):
+                    reentry_mode = overall.overall_reentry_on_target
+                if reentry_mode and reentry_mode in ("asap", "asap_reverse", "cost", "cost_reverse"):
+                    overall_reentry_pending = True
+            if overall_reentry_pending:
+                all_closed = all(p is None for p in positions)
+                if all_closed:
+                    overall_reentry_pending = False
+                    overall_locked = 0.0
+                    overall_peak_pnl = 0.0
+                    for li in range(len(legs)):
+                        pending_entries[li] = True
 
         equity = cash
         for pos in positions:
-            if pos is not None:
+            if pos is not None and not pos.momentum_pending:
                 premium = _leg_premium(S, pos.strike, T, pos.option_type)
                 diff = premium - pos.entry_price
                 if pos.action == "sell":
@@ -334,7 +457,7 @@ def run_options_backtest(
         equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(equity, 2)})
 
     for li in range(len(legs)):
-        if positions[li] is not None:
+        if positions[li] is not None and not positions[li].momentum_pending:
             _close_leg(li, candles[-1], "end_of_data")
     if equity_curve:
         equity_curve[-1]["equity"] = round(cash, 2)

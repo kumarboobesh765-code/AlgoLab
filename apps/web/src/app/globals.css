@@ -21,8 +21,12 @@
 }
 
 html.dark body {
-  background: #0b1220;
+  background: #0f172a;
   color: #e2e8f0;
+}
+
+html.dark .bg-\[\#F8FAFC\] {
+  background: #0f172a;
 }
 
 html.dark .bg-white\/90 {

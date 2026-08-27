@@ -64,6 +64,12 @@ export interface StrategyDefinitionV1 {
   entry_momentum?: EntryMomentumConfig | null;
   time_control?: TimeControlConfig | null;
   legwise?: LegwiseSettings | null;
+  // Strategy-level settings
+  strategy_type?: "intraday" | "intraday_same_day" | "btst" | "positional";
+  skip_initial_candles?: number;
+  max_position_in_a_day?: number;
+  cash_or_futures?: "cash" | "futures";
+  reentry_time_restriction?: "none" | "after_time" | "before_time";
 }
 
 export interface OptionLeg {
@@ -73,8 +79,16 @@ export interface OptionLeg {
   strike_offset?: number | null;
   lots?: number;
   expiry?: string | null;
+  // Simple Momentum — entry delayed until premium/underlying moves by X
+  momentum_mode?:
+    | "none"
+    | "pts_up" | "pts_down"
+    | "pct_up" | "pct_down"
+    | "underlying_pts_up" | "underlying_pts_down"
+    | "underlying_pct_up" | "underlying_pct_down";
+  momentum_value?: number;
   // Per-leg stop loss
-  sl_mode?: "pts" | "%" | "underlying_pts" | "underlying_pct" | null;
+  sl_mode?: "pts" | "%" | "underlying_pts" | "underlying_pct" | "delta" | null;
   sl_value?: number | null;
   // Per-leg target
   target_mode?: "pts" | "%" | "underlying_pts" | "underlying_pct" | null;
@@ -115,6 +129,8 @@ export interface OverallConfig {
   lock_and_trail_profit: number | null;
   lock_and_trail_at: number | null;
   lock_and_trail_by: number | null;
+  overall_reentry_on_sl?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | null;
+  overall_reentry_on_target?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | null;
 }
 
 export interface EntryMomentumConfig {

@@ -26,7 +26,8 @@ const STRIKE_STEPS: Record<string, number> = {
 
 type Action = "buy" | "sell";
 type OptType = "CE" | "PE";
-type SlMode = "pts" | "%" | "underlying_pts" | "underlying_pct";
+type SlMode = "pts" | "%" | "underlying_pts" | "underlying_pct" | "delta";
+type MomentumMode = "none" | "pts_up" | "pts_down" | "pct_up" | "pct_down" | "underlying_pts_up" | "underlying_pts_down" | "underlying_pct_up" | "underlying_pct_down";
 type ReentryMode = "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg";
 
 interface Leg {
@@ -35,6 +36,9 @@ interface Leg {
   optType: OptType;
   offset: number;
   lots: number;
+  // Simple Momentum
+  momentumMode: MomentumMode;
+  momentumValue: string;
   // Per-leg SL
   slMode: SlMode | "";
   slValue: string;
@@ -57,6 +61,7 @@ function mkLeg(action: Action, optType: OptType, offset: number, lots = 1): Leg 
   return {
     id: `l_${Math.random().toString(36).slice(2, 8)}`,
     action, optType, offset, lots,
+    momentumMode: "none", momentumValue: "",
     slMode: "", slValue: "",
     targetMode: "", targetValue: "",
     trailMode: "", trailStep: "", trailBy: "",
@@ -90,6 +95,19 @@ const SL_MODES: { value: SlMode; label: string }[] = [
   { value: "%", label: "Premium %" },
   { value: "underlying_pts", label: "Underlying Pts" },
   { value: "underlying_pct", label: "Underlying %" },
+  { value: "delta", label: "Delta" },
+];
+
+const MOMENTUM_MODES: { value: MomentumMode; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "pts_up", label: "Premium Pts Up" },
+  { value: "pts_down", label: "Premium Pts Down" },
+  { value: "pct_up", label: "Premium % Up" },
+  { value: "pct_down", label: "Premium % Down" },
+  { value: "underlying_pts_up", label: "Underlying Pts Up" },
+  { value: "underlying_pts_down", label: "Underlying Pts Down" },
+  { value: "underlying_pct_up", label: "Underlying % Up" },
+  { value: "underlying_pct_down", label: "Underlying % Down" },
 ];
 
 const REENTRY_MODES: { value: ReentryMode; label: string }[] = [
@@ -168,7 +186,11 @@ export default function LegBuilderPage() {
   const [lockTrailAt, setLockTrailAt] = useState("");
   const [lockTrailBy, setLockTrailBy] = useState("");
 
-  // Entry momentum
+  // Overall re-entry
+  const [overallReentryOnSl, setOverallReentryOnSl] = useState<"" | "asap" | "asap_reverse" | "cost" | "cost_reverse">("");
+  const [overallReentryOnTarget, setOverallReentryOnTarget] = useState<"" | "asap" | "asap_reverse" | "cost" | "cost_reverse">("");
+
+  // Entry momentum (legacy - kept for backward compat)
   const [momentumEnabled, setMomentumEnabled] = useState(false);
   const [momentumDir, setMomentumDir] = useState<"up" | "down">("up");
   const [momentumMode, setMomentumMode] = useState<"pts" | "%">("pts");
@@ -182,6 +204,13 @@ export default function LegBuilderPage() {
   // Legwise
   const [trailToBreakeven, setTrailToBreakeven] = useState<"none" | "sl_legs" | "all_legs">("none");
   const [squareOffOnLegSl, setSquareOffOnLegSl] = useState(false);
+
+  // Strategy-level settings
+  const [strategyType, setStrategyType] = useState<"options" | "futures" | "combined">("options");
+  const [skipInitialCandles, setSkipInitialCandles] = useState("");
+  const [maxPositionInADay, setMaxPositionInADay] = useState("");
+  const [cashOrFutures, setCashOrFutures] = useState<"options" | "futures">("options");
+  const [reentryTimeRestriction, setReentryTimeRestriction] = useState("");
 
   if (chainFor !== underlying) {
     setChainFor(underlying);
@@ -290,6 +319,7 @@ export default function LegBuilderPage() {
       strike: l.strike,
       lots: l.lots,
       premium: l.premium,
+      ...(l.momentumMode && l.momentumMode !== "none" && l.momentumValue ? { momentum_mode: l.momentumMode, momentum_value: Number(l.momentumValue) } : {}),
       ...(l.slMode && l.slValue ? { sl_mode: l.slMode, sl_value: Number(l.slValue) } : {}),
       ...(l.targetMode && l.targetValue ? { target_mode: l.targetMode, target_value: Number(l.targetValue) } : {}),
       ...(l.trailMode && l.trailStep ? { trail_mode: l.trailMode, trail_step: Number(l.trailStep), trail_by: Number(l.trailBy) || undefined } : {}),
@@ -311,14 +341,21 @@ export default function LegBuilderPage() {
       lock_and_trail_profit: lockTrailProfit ? Number(lockTrailProfit) : null,
       lock_and_trail_at: lockTrailAt ? Number(lockTrailAt) : null,
       lock_and_trail_by: lockTrailBy ? Number(lockTrailBy) : null,
+      overall_reentry_on_sl: overallReentryOnSl || null,
+      overall_reentry_on_target: overallReentryOnTarget || null,
     },
     entry_momentum: momentumEnabled ? { enabled: true, direction: momentumDir, mode: momentumMode, value: Number(momentumValue) || 0 } : null,
     time_control: {
       no_entry_after: noEntryAfter || null,
       no_reentry_after: noReentryAfter || null,
       time_exit: timeExit || null,
+      reentry_time_restriction: reentryTimeRestriction || null,
     },
     legwise: { trail_sl_to_breakeven: trailToBreakeven, square_off_on_leg_sl: squareOffOnLegSl },
+    strategy_type: strategyType,
+    skip_initial_candles: skipInitialCandles ? Number(skipInitialCandles) : null,
+    max_position_in_a_day: maxPositionInADay ? Number(maxPositionInADay) : null,
+    cash_or_futures: cashOrFutures,
   });
 
   const doSave = async (): Promise<string> => {
@@ -483,7 +520,17 @@ export default function LegBuilderPage() {
                   {expandedLeg === l.id && (
                     <tr>
                       <td colSpan={8} className="border-b border-slate-100 bg-slate-50/50 px-4 py-3">
-                        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                          {/* Simple Momentum */}
+                          <div>
+                            <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Simple Momentum</p>
+                            <select value={l.momentumMode} onChange={(e) => patchLeg(l.id, { momentumMode: e.target.value as MomentumMode })} className="rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700">
+                              {MOMENTUM_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            </select>
+                            {l.momentumMode !== "none" && (
+                              <input type="number" step="0.01" value={l.momentumValue} onChange={(e) => patchLeg(l.id, { momentumValue: e.target.value })} placeholder="Value" className="mt-1 w-full rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
+                            )}
+                          </div>
                           {/* Stop Loss */}
                           <div>
                             <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Stop Loss</p>
@@ -493,7 +540,7 @@ export default function LegBuilderPage() {
                                 {SL_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                               </select>
                               {l.slMode && (
-                                <input type="number" value={l.slValue} onChange={(e) => patchLeg(l.id, { slValue: e.target.value })} placeholder="Value" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
+                                <input type="number" step="0.01" value={l.slValue} onChange={(e) => patchLeg(l.id, { slValue: e.target.value })} placeholder="Value" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
                               )}
                             </div>
                           </div>
@@ -506,7 +553,7 @@ export default function LegBuilderPage() {
                                 {SL_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                               </select>
                               {l.targetMode && (
-                                <input type="number" value={l.targetValue} onChange={(e) => patchLeg(l.id, { targetValue: e.target.value })} placeholder="Value" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
+                                <input type="number" step="0.01" value={l.targetValue} onChange={(e) => patchLeg(l.id, { targetValue: e.target.value })} placeholder="Value" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
                               )}
                             </div>
                           </div>
@@ -521,9 +568,9 @@ export default function LegBuilderPage() {
                               </select>
                               {l.trailMode && (
                                 <>
-                                  <input type="number" value={l.trailBy} onChange={(e) => patchLeg(l.id, { trailBy: e.target.value })} placeholder="For every" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
+                                  <input type="number" step="0.01" value={l.trailBy} onChange={(e) => patchLeg(l.id, { trailBy: e.target.value })} placeholder="For every" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
                                   <span className="self-center text-[10px] text-slate-400">→</span>
-                                  <input type="number" value={l.trailStep} onChange={(e) => patchLeg(l.id, { trailStep: e.target.value })} placeholder="Move SL" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
+                                  <input type="number" step="0.01" value={l.trailStep} onChange={(e) => patchLeg(l.id, { trailStep: e.target.value })} placeholder="Move SL" className="w-20 rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700" />
                                 </>
                               )}
                             </div>
@@ -697,6 +744,65 @@ export default function LegBuilderPage() {
           <label className="flex items-center gap-2 text-xs font-medium text-slate-500">
             <input type="checkbox" checked={squareOffOnLegSl} onChange={(e) => setSquareOffOnLegSl(e.target.checked)} className="rounded border-slate-300" />
             Square off all legs on any leg SL hit
+          </label>
+        </div>
+      </Card>
+
+      {/* Strategy Settings */}
+      <Card title="Strategy Settings" subtitle="Strategy type, position limits, and re-entry timing.">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <label className="block text-xs font-medium text-slate-500">
+            Strategy Type
+            <select value={strategyType} onChange={(e) => setStrategyType(e.target.value as "options" | "futures" | "combined")} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
+              <option value="options">Options</option>
+              <option value="futures">Futures</option>
+              <option value="combined">Combined</option>
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Skip Initial Candles
+            <input type="number" min={0} value={skipInitialCandles} onChange={(e) => setSkipInitialCandles(e.target.value)} placeholder="e.g. 5" className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Max Positions / Day
+            <input type="number" min={0} value={maxPositionInADay} onChange={(e) => setMaxPositionInADay(e.target.value)} placeholder="e.g. 3" className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Cash / Futures
+            <select value={cashOrFutures} onChange={(e) => setCashOrFutures(e.target.value as "options" | "futures")} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
+              <option value="options">Options</option>
+              <option value="futures">Futures</option>
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Re-entry Time Restriction (HH:MM)
+            <input type="time" value={reentryTimeRestriction} onChange={(e) => setReentryTimeRestriction(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+          </label>
+        </div>
+      </Card>
+
+      {/* Overall Re-entry Settings */}
+      <Card title="Overall Re-entry" subtitle="Re-enter strategy after overall SL or Target is hit.">
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-xs font-medium text-slate-500">
+            Re-entry on Overall SL
+            <select value={overallReentryOnSl} onChange={(e) => setOverallReentryOnSl(e.target.value as "" | "asap" | "asap_reverse" | "cost" | "cost_reverse")} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
+              <option value="">None</option>
+              <option value="asap">ASAP (same dir)</option>
+              <option value="asap_reverse">ASAP Reverse</option>
+              <option value="cost">COST (at entry)</option>
+              <option value="cost_reverse">COST Reverse</option>
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-slate-500">
+            Re-entry on Overall Target
+            <select value={overallReentryOnTarget} onChange={(e) => setOverallReentryOnTarget(e.target.value as "" | "asap" | "asap_reverse" | "cost" | "cost_reverse")} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
+              <option value="">None</option>
+              <option value="asap">ASAP (same dir)</option>
+              <option value="asap_reverse">ASAP Reverse</option>
+              <option value="cost">COST (at entry)</option>
+              <option value="cost_reverse">COST Reverse</option>
+            </select>
           </label>
         </div>
       </Card>

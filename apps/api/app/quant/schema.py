@@ -108,6 +108,9 @@ class OverallConfig(BaseModel):
     lock_and_trail_profit: float | None = Field(default=None, description="Lock ₹ at threshold")
     lock_and_trail_at: float | None = Field(default=None, description="MTM threshold ₹")
     lock_and_trail_by: float | None = Field(default=None, description="Trail locked profit by ₹")
+    # Re-entry on overall SL / Target
+    overall_reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse"] | None = None
+    overall_reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse"] | None = None
 
 
 class EntryMomentumConfig(BaseModel):
@@ -146,8 +149,18 @@ class OptionLeg(BaseModel):
     expiry: str | None = None
     expiry_formula: str | None = None  # e.g., "THIS_WEEK", "NEXT_WEEK", "THIS_MONTH", "NEXT_MONTH"
 
+    # Simple Momentum — entry delayed until premium/underlying moves by X
+    momentum_mode: Literal[
+        "none",
+        "pts_up", "pts_down",
+        "pct_up", "pct_down",
+        "underlying_pts_up", "underlying_pts_down",
+        "underlying_pct_up", "underlying_pct_down",
+    ] = "none"
+    momentum_value: float = Field(default=0, ge=0)
+
     # Per-leg stop loss
-    sl_mode: Literal["pts", "%", "underlying_pts", "underlying_pct"] | None = None
+    sl_mode: Literal["pts", "%", "underlying_pts", "underlying_pct", "delta"] | None = None
     sl_value: float | None = None
 
     # Per-leg target
@@ -243,6 +256,12 @@ class StrategyDefinition(BaseModel):
     entry_momentum: EntryMomentumConfig | None = None
     time_control: TimeControlConfig | None = None
     legwise: LegwiseSettings | None = None
+    # Strategy-level settings
+    strategy_type: Literal["intraday", "intraday_same_day", "btst", "positional"] = "intraday"
+    skip_initial_candles: int = Field(default=0, ge=0, le=50, description="Skip first N candles before evaluating")
+    max_position_in_a_day: int = Field(default=0, ge=0, le=100, description="Max entries per day (0 = unlimited)")
+    cash_or_futures: Literal["cash", "futures"] = "cash"
+    reentry_time_restriction: Literal["none", "after_time", "before_time"] = "none"
 
     @field_validator("timeframe")
     @classmethod
