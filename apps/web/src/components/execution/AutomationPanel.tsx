@@ -39,7 +39,17 @@ export function AutomationPanel() {
   }
 
   useEffect(() => {
-    refresh();
+    let cancelled = false;
+    Promise.all([
+      api<AutomationState[]>("/automation"),
+      api<Strategy[]>("/strategies"),
+    ]).then(([all, strats]) => {
+      if (cancelled) return;
+      setStates(all);
+      setStrategies(strats.filter((s) => s.definition));
+      setStrategyId((cur) => cur || strats.find((s) => s.definition)?.id || "");
+    }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   async function start() {

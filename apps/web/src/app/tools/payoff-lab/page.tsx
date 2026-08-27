@@ -14,6 +14,24 @@ import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { PayoffChart, inr, fmt } from "@/components/charts/PayoffChart";
 
+interface MarginEstimate {
+  lot_size: number;
+  spot_used: number;
+  legs: Array<{
+    label: string;
+    span: number;
+    exposure: number;
+    premium_paid: number;
+    total: number;
+  }>;
+  hedge_discount: number;
+  total_margin: number;
+  premium_outlay: number;
+  defined_risk: boolean;
+  max_loss_theoretical: number | null;
+  disclaimer?: string;
+}
+
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"];
 const STRIKE_STEPS: Record<string, number> = {
   NIFTY: 50,
@@ -68,6 +86,8 @@ export default function PayoffLabPage() {
   const [busy, setBusy] = useState(false);
   const [mcBusy, setMcBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [margin, setMargin] = useState<MarginEstimate | null>(null);
+  const [marginBusy, setMarginBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +179,34 @@ export default function PayoffLabPage() {
       .then(setMc)
       .catch((e) => setError(e instanceof Error ? e.message : "Simulation failed"))
       .finally(() => setMcBusy(false));
+  };
+
+  const calculateMargin = async () => {
+    setMarginBusy(true);
+    setError(null);
+    try {
+      const resp = await api("/options/margin", {
+        method: "POST",
+        body: JSON.stringify({
+          underlying,
+          expiry,
+          dte_days: dte,
+          lot_size: lotSize,
+          spot: result?.spot,
+          legs: legs.map((l) => ({
+            action: l.action,
+            option_type: l.option_type,
+            strike_offset: l.offset,
+            lots: l.lots,
+          })),
+        }),
+      });
+      setMargin(resp as MarginEstimate);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Margin calculation failed");
+    } finally {
+      setMarginBusy(false);
+    }
   };
 
   const presetNames = useMemo(
@@ -313,6 +361,13 @@ export default function PayoffLabPage() {
           >
             {busy ? "Analyzing…" : "Analyze Payoff"}
           </button>
+          <button
+            onClick={calculateMargin}
+            disabled={marginBusy || legs.length === 0 || !result}
+            className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {marginBusy ? "Calculating…" : "Calculate Margin"}
+          </button>
           {result && result.is_demo && <Badge tone="amber">DEMO DATA — synthetic</Badge>}
         </div>
       </Card>
@@ -394,12 +449,67 @@ export default function PayoffLabPage() {
               </table>
             </div>
           </Card>
+
+          {margin && (
+            <Card title="Margin Estimate (SPAN + Exposure)" subtitle="Rule-of-thumb SPAN + Exposure with hedge discounts — broker's real margin governs">
+              <div className="grid gap-3 sm:grid-cols-4">
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Margin</p>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-emerald-600">{inr(margin.total_margin)}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">SPAN</p>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-800">{inr(margin.legs.reduce((s, l) => s + l.span, 0))}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Exposure</p>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-800">{inr(margin.legs.reduce((s, l) => s + l.exposure, 0))}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Hedge Discount</p>
+                  <p className="mt-0.5 text-sm font-semibold tabular-nums text-emerald-600">{inr(margin.hedge_discount)}</p>
+                </div>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-[12px] tabular-nums">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[10px] uppercase tracking-wide text-slate-400">
+                      <th className="pb-2 pr-3 font-medium">Leg</th>
+                      <th className="pb-2 pr-3 font-medium">SPAN</th>
+                      <th className="pb-2 pr-3 font-medium">Exposure</th>
+                      <th className="pb-2 pr-3 font-medium">Premium Paid</th>
+                      <th className="pb-2 font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {margin.legs.map((leg, i) => (
+                      <tr key={i} className="border-b border-slate-50 last:border-0">
+                        <td className="py-1.5 pr-3 font-medium text-slate-700">{leg.label}</td>
+                        <td className="py-1.5 pr-3 tabular-nums text-slate-500">{inr(leg.span)}</td>
+                        <td className="py-1.5 pr-3 tabular-nums text-slate-500">{inr(leg.exposure)}</td>
+                        <td className="py-1.5 pr-3 tabular-nums text-slate-500">{inr(leg.premium_paid)}</td>
+                        <td className="py-1.5 tabular-nums font-semibold text-slate-800">{inr(leg.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+{margin.max_loss_theoretical !== null && (
+                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Max theoretical loss (defined-risk): <strong>{inr(margin.max_loss_theoretical)}</strong>
+                </p>
+              )}
+              <p className="mt-3 text-[11px] text-slate-400">
+                {margin.disclaimer || "Estimate using rule-of-thumb SPAN + Exposure rates. Your broker's real margin file governs actual blocks."}
+              </p>
+            </Card>
+          )}
         </>
       )}
 
       <Card
         title="Monte Carlo"
-        subtitle={`GBM paths repriced through Black-Scholes at horizon${result ? "" : " · run Analyze Payoff first to resolve legs"}`}
+        subtitle={`GBM paths repriced through Black-Scholes at horizon${result ? "" : " A� run Analyze Payoff first to resolve legs"}`}
         actions={
               <div className="flex items-center gap-2">
                 <select
