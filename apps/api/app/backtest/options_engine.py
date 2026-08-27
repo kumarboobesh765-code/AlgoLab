@@ -1,464 +1,377 @@
-"""Options backtest engine.
+"""Options backtest engine for multi-leg strategies.
 
-Simulates multi-leg options strategies over historical candles with:
-- Black-Scholes pricing for entry/exit marks
-- Greeks tracking
-- Assignment/exercise logic at expiry
-- Auto-rollover for calendar spreads
-- Indian F&O cost structure (STT, brokerage, etc.)
+Simulates per-leg option positions with AlgoTest-parity risk management.
+Uses Black-Scholes to model option premiums from underlying candles.
 """
 
+from __future__ import annotations
+
+import math
 from collections.abc import Sequence
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
 
 from app.marketdata.base import Candle
-from app.quant.options import (
-    black_scholes_price,
-    days_to_expiry,
-    get_monthly_expiry,
-    get_weekly_expiry,
-    parse_strike_formula,
-)
 from app.quant.schema import StrategyDefinition
+
+RISK_FREE = 0.06
+STRIKE_STEPS = {"NIFTY": 50, "BANKNIFTY": 100, "FINNIFTY": 50, "MIDCPNIFTY": 75, "SENSEX": 100, "BANKEX": 100}
+
+
+def _strike_step(symbol: str) -> int:
+    return STRIKE_STEPS.get(symbol.upper(), 50)
+
+
+def _bs_price(S: float, K: float, T: float, sigma: float, is_call: bool) -> float:
+    if T <= 0 or sigma <= 0:
+        return max(S - K, 0) if is_call else max(K - S, 0)
+    d1 = (math.log(S / K) + (RISK_FREE + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+    nd2 = 0.5 * (1 + math.erf(d2 / math.sqrt(2)))
+    if is_call:
+        return S * nd1 - K * math.exp(-RISK_FREE * T) * nd2
+    return K * math.exp(-RISK_FREE * T) * (1 - nd2) - S * (1 - nd1)
+
+
+def _parse_time_hm(t: str | None) -> int | None:
+    if not t:
+        return None
+    try:
+        parts = t.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _bar_minutes(ts) -> int:
+    return ts.hour * 60 + ts.minute
 
 
 class OptionsBacktestError(ValueError):
-    """Raised for invalid options backtest inputs."""
+    pass
 
 
 @dataclass(slots=True)
-class OptionsLegPnL:
-    """P&L tracking for a single option leg."""
-
+class LegTrade:
     leg_index: int
-    action: str  # "buy" | "sell"
-    option_type: str  # "CE" | "PE"
+    action: str
+    option_type: str
     strike: float
-    expiry: date
-    lots: int
+    entry_time: object
     entry_price: float
-    entry_date: date
-    current_price: float
-    current_date: date
-    days_held: int
-    gross_pnl: float
-    costs: dict[str, float]
-    net_pnl: float
-    exit_reason: str | None = None
+    exit_time: object
+    exit_price: float
+    exit_reason: str
+    pnl: float
+    lots: int
+
+    def as_dict(self) -> dict:
+        return {
+            "leg_index": self.leg_index,
+            "action": self.action,
+            "option_type": self.option_type,
+            "strike": self.strike,
+            "entry_time": self.entry_time.isoformat(),
+            "entry_price": round(self.entry_price, 2),
+            "exit_time": self.exit_time.isoformat(),
+            "exit_price": round(self.exit_price, 2),
+            "exit_reason": self.exit_reason,
+            "pnl": round(self.pnl, 2),
+            "lots": self.lots,
+        }
+
+
+@dataclass(slots=True)
+class LegPosition:
+    leg_index: int
+    action: str
+    option_type: str
+    strike: float
+    lots: int
+    entry_index: int
+    entry_price: float
+    entry_underlying: float
+    sl_price: float | None = None
+    target_price: float | None = None
+    trail_active: bool = False
+    trail_step: float = 0.0
+    trail_trigger: float = 0.0
+    trail_extreme: float = 0.0
+    reentry_count: int = 0
+    max_reentries: int = 0
+    reentry_on_sl: str | None = None
+    reentry_on_target: str | None = None
+    square_off: str = "partial"
 
 
 @dataclass(slots=True)
 class OptionsBacktestResult:
-    """Complete options backtest result."""
-
-    legs: list[OptionsLegPnL]
-    daily_values: list[dict]  # Daily MTM
-    summary: dict
-    cost_breakdown: dict[str, float]
+    trades: list[LegTrade] = field(default_factory=list)
+    equity_curve: list[dict] = field(default_factory=list)
+    summary: dict = field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class OptionsConfig:
-    """Options backtest configuration."""
-
-    initial_capital: float = 100_000.0
-    volatility: float = 0.20  # Implied volatility assumption
-    rate: float = 0.06  # Risk-free rate
-    dividend_yield: float = 0.012  # Index dividend yield
-    lot_size: int = 50  # NIFTY lot size
-    strike_interval: float = 50.0  # NIFTY strike interval
-    auto_roll: bool = True  # Auto-roll expiring positions
-
-
-def _leg_costs(price: float, qty: float, is_sell: bool, trade_date: date | None = None) -> dict:
-    """Indian F&O per-fill cost breakdown (INR).
-
-    STT applies on the sell side only — date-aware per Budget 2026:
-    0.10% of premium before Apr 1 2026, 0.15% on/after.
-    """
-    from app.services.market_calendar import stt_options_sell
-
-    d = trade_date or date.today()
-    notional = abs(qty) * price
-    stt = stt_options_sell(notional, d) if is_sell else 0.0
-    stamp = 0.0003 * notional
-    exchange = 0.0005 * notional
-    sebi = 0.000001 * notional
-    brokerage = 20.0
-    gst = 0.18 * (brokerage + exchange + sebi)
-    return {"stt": stt, "stamp": stamp, "exchange": exchange, "sebi": sebi, "brokerage": brokerage, "gst": gst}
-
-
-def _resolve_expiry(expiry_formula: str, reference_date: date) -> date:
-    """Resolve expiry formula to actual date."""
-    formula = expiry_formula.strip().upper() if expiry_formula else "THIS_WEEK"
-    if formula in ("THIS_WEEK", "WEEKLY"):
-        return get_weekly_expiry(reference_date)
-    if formula == "NEXT_WEEK":
-        this_week = get_weekly_expiry(reference_date)
-        from datetime import timedelta
-        next_week = this_week + timedelta(days=7)
-        while next_week.weekday() >= 5:
-            next_week += timedelta(days=1)
-        return next_week
-    if formula in ("THIS_MONTH", "MONTHLY"):
-        return get_monthly_expiry(reference_date)
-    if formula == "NEXT_MONTH":
-        from datetime import timedelta
-        next_month = reference_date.month + 1 if reference_date.month < 12 else 1
-        next_year = reference_date.year if reference_date.month < 12 else reference_date.year + 1
-        return get_monthly_expiry(date(next_year, next_month, 1))
-    try:
-        return date.fromisoformat(formula)
-    except ValueError:
-        return get_weekly_expiry(reference_date)
-
-
-def _resolve_strike(strike_formula: str, spot: float, strike_interval: float,
-                     days_to_expiry: float, volatility: float, option_type: str) -> float:
-    """Resolve strike formula to actual strike price."""
-    result = parse_strike_formula(
-        strike_formula,
-        spot,
-        strike_interval,
-        days_to_expiry,
-        volatility,
-        option_type=option_type,
-    )
-    return result.strike
-
-
-def _calculate_leg_price(spot: float, strike: float, days_to_exp: float,
-                          volatility: float, option_type: str, is_entry: bool = True) -> float:
-    """Calculate option leg price with bid-ask spread."""
-    price = black_scholes_price(
-        spot, strike, days_to_exp, volatility,
-        rate=0.06, dividend_yield=0.012, option_type=option_type
-    )
-    # Add simulated spread
-    spread = price * 0.01  # 1% spread
-    if is_entry:
-        return price + spread / 2  # Buy at ask
-    else:
-        return price - spread / 2  # Sell at bid
+def _compute_sl_target(leg, entry_price: float, entry_underlying: float, step: int) -> tuple[float | None, float | None]:
+    sl = None
+    tgt = None
+    if leg.sl_mode and leg.sl_value:
+        if leg.sl_mode == "pts":
+            sl = entry_price - leg.sl_value if leg.action == "buy" else entry_price + leg.sl_value
+        elif leg.sl_mode == "%":
+            pct = leg.sl_value / 100.0
+            sl = entry_price * (1 - pct) if leg.action == "buy" else entry_price * (1 + pct)
+        elif leg.sl_mode in ("underlying_pts", "underlying_pct"):
+            u_move = leg.sl_value if leg.sl_mode == "underlying_pts" else entry_underlying * leg.sl_value / 100.0
+            sl = entry_price - u_move * 0.5 if leg.action == "buy" else entry_price + u_move * 0.5
+    if leg.target_mode and leg.target_value:
+        if leg.target_mode == "pts":
+            tgt = entry_price + leg.target_value if leg.action == "buy" else entry_price - leg.target_value
+        elif leg.target_mode == "%":
+            pct = leg.target_value / 100.0
+            tgt = entry_price * (1 + pct) if leg.action == "buy" else entry_price * (1 - pct)
+        elif leg.target_mode in ("underlying_pts", "underlying_pct"):
+            u_move = leg.target_value if leg.target_mode == "underlying_pts" else entry_underlying * leg.target_value / 100.0
+            tgt = entry_price + u_move * 0.5 if leg.action == "buy" else entry_price - u_move * 0.5
+    return sl, tgt
 
 
 def run_options_backtest(
     definition: StrategyDefinition,
     candles: Sequence[Candle],
-    config: OptionsConfig | None = None,
-    leg_premium_lookup: list[dict[date, float]] | None = None,
+    initial_capital: float = 100_000.0,
+    costs_pct: float = 0.03,
 ) -> OptionsBacktestResult:
-    """Run backtest for options strategy.
-
-    Args:
-        definition: Strategy definition with legs
-        candles: Historical underlying candles
-        config: Options backtest configuration
-        leg_premium_lookup: Optional per-leg {date -> real premium close} maps
-            (from expired-options history). When present for a leg/date, real
-            traded premiums mark the position; Black-Scholes is the fallback.
-
-    Returns:
-        OptionsBacktestResult with leg P&L and summary
-    """
-    cfg = config or OptionsConfig()
-    lookup = leg_premium_lookup or []
-
-    def _real(j: int, d: date) -> float | None:
-        if j < len(lookup) and lookup[j]:
-            return lookup[j].get(d)
-        return None
-
     if len(candles) < 2:
         raise OptionsBacktestError("Need at least 2 candles")
-
     if not definition.legs:
-        raise OptionsBacktestError("Strategy must have at least one leg")
+        raise OptionsBacktestError("No legs defined")
 
-    # Get spot price series from candles
-    spot_prices = [c.close for c in candles]
-    timestamps = [c.timestamp for c in candles]
+    legs = definition.legs
+    n = len(candles)
+    step = _strike_step(definition.instrument.symbol)
+    overall = definition.overall
+    time_cfg = definition.time_control
+    legwise = definition.legwise
 
-    # Initialize legs
-    legs = []
-    for i, leg_def in enumerate(definition.legs):
-        leg = {
-            "action": leg_def.action,
-            "option_type": leg_def.option_type,
-            "strike_formula": leg_def.strike_formula or "ATM",
-            "lots": leg_def.lots,
-            "lots_formula": leg_def.lots_formula,
-            "expiry_formula": leg_def.expiry_formula or "THIS_WEEK",
-            "strike": leg_def.strike,
-            "expiry": date.fromisoformat(leg_def.expiry) if leg_def.expiry else None,
-        }
-        legs.append(leg)
+    cash = initial_capital
+    positions: list[LegPosition | None] = [None] * len(legs)
+    pending_entries: list[bool] = [True] * len(legs)
+    trades: list[LegTrade] = []
+    equity_curve: list[dict] = []
+    total_costs = 0.0
+    overall_locked = 0.0
+    overall_peak_pnl = 0.0
+    iv = 0.20
 
-    # Resolve initial strikes and expiries
-    resolved_legs = []
-    for leg in legs:
-        ref_date = timestamps[0].date() if hasattr(timestamps[0], 'date') else date.today()
-        expiry = leg["expiry"] or _resolve_expiry(leg["expiry_formula"], ref_date)
-        strike = leg["strike"] or _resolve_strike(
-            leg["strike_formula"], spot_prices[0], cfg.strike_interval,
-            days_to_expiry(ref_date, expiry), cfg.volatility, leg["option_type"]
+    def _leg_premium(S: float, strike: float, T: float, opt_type: str) -> float:
+        return max(_bs_price(S, strike, T, iv, opt_type == "CE"), 0.01)
+
+    def _open_leg(li: int, bar, S: float, T: float) -> None:
+        nonlocal cash, total_costs
+        leg = legs[li]
+        strike_offset = leg.strike_offset or 0
+        strike = round(S / step) * step + strike_offset * step
+        premium = _leg_premium(S, strike, T, leg.option_type)
+        lots = leg.lots or 1
+        cost = premium * lots * costs_pct / 100.0
+        cash -= cost
+        total_costs += cost
+        sl, tgt = _compute_sl_target(leg, premium, S, step)
+        trail_step_val = leg.trail_step or 0
+        trail_by_val = leg.trail_by or 0
+        positions[li] = LegPosition(
+            leg_index=li, action=leg.action, option_type=leg.option_type,
+            strike=strike, lots=lots, entry_index=i, entry_price=premium,
+            entry_underlying=S, sl_price=sl, target_price=tgt,
+            trail_active=bool(trail_by_val > 0 and trail_step_val > 0),
+            trail_step=trail_step_val, trail_trigger=trail_by_val,
+            trail_extreme=premium,
+            max_reentries=leg.max_reentries or 0,
+            reentry_on_sl=leg.reentry_on_sl, reentry_on_target=leg.reentry_on_target,
+            square_off=leg.square_off or "partial",
         )
-        resolved_legs.append({
-            **leg,
-            "strike": strike,
-            "expiry": expiry,
-        })
 
-    # Simulate each bar
-    leg_pnls: list[OptionsLegPnL] = []
-    leg_entries = [None] * len(resolved_legs)
-    daily_values = []
+    def _close_leg(li: int, bar, reason: str) -> None:
+        nonlocal cash, total_costs
+        pos = positions[li]
+        if pos is None:
+            return
+        S = bar.close
+        T = max((n - i) / (252 * (375 / 5)), 1 / 375)
+        premium = _leg_premium(S, pos.strike, T, pos.option_type)
+        gross = (premium - pos.entry_price) * pos.lots
+        if pos.action == "sell":
+            gross = -gross
+        cost = abs(premium * pos.lots * costs_pct / 100.0)
+        cash += gross - cost
+        total_costs += cost
+        trades.append(LegTrade(
+            leg_index=li, action=pos.action, option_type=pos.option_type,
+            strike=pos.strike, entry_time=candles[pos.entry_index].timestamp,
+            entry_price=pos.entry_price, exit_time=bar.timestamp,
+            exit_price=premium, exit_reason=reason, pnl=gross - cost, lots=pos.lots,
+        ))
+        positions[li] = None
 
-    for i, (ts, spot) in enumerate(zip(timestamps, spot_prices)):
-        current_date = ts.date() if hasattr(ts, 'date') else date.today()
+    def _compute_mtm(S: float, T: float) -> float:
+        mtm = 0.0
+        for li_pos, pos in enumerate(positions):
+            if pos is None:
+                continue
+            premium = _leg_premium(S, pos.strike, T, pos.option_type)
+            diff = premium - pos.entry_price
+            if pos.action == "sell":
+                diff = -diff
+            mtm += diff * pos.lots
+        return mtm
 
-        # Check for expiry and rollover
-        for j, leg in enumerate(resolved_legs):
-            if leg_entries[j] is not None:
-                entry = leg_entries[j]
-                if current_date >= entry["expiry"]:
-                    # Exercise/assignment at expiry
-                    entry_price = entry["price"]
-                    intrinsic = max(spot - entry["strike"], 0) if entry["option_type"] == "CE" else max(entry["strike"] - spot, 0)
-                    exit_price = intrinsic
+    for i in range(n):
+        bar = candles[i]
+        S = bar.close
+        bar_min = _bar_minutes(bar.timestamp)
+        T = max((n - i) / (252 * (375 / 5)), 1 / 375)
 
-                    qty = entry["lots"] * cfg.lot_size
-                    if entry["action"] == "sell":
-                        gross_pnl = (entry_price - exit_price) * qty
-                    else:
-                        gross_pnl = (exit_price - entry_price) * qty
+        no_entry = _parse_time_hm(time_cfg.no_entry_after) if time_cfg else None
+        no_reentry = _parse_time_hm(time_cfg.no_reentry_after) if time_cfg else None
+        force_exit = _parse_time_hm(time_cfg.time_exit) if time_cfg else None
 
-                    costs = _leg_costs(exit_price, qty, is_sell=True)
-                    total_costs = sum(costs.values())
-                    net_pnl = gross_pnl - total_costs
+        if force_exit and bar_min >= force_exit:
+            for li in range(len(legs)):
+                if positions[li] is not None:
+                    _close_leg(li, bar, "time_exit")
+            equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(cash, 2)})
+            continue
 
-                    leg_pnls.append(OptionsLegPnL(
-                        leg_index=j,
-                        action=entry["action"],
-                        option_type=entry["option_type"],
-                        strike=entry["strike"],
-                        expiry=entry["expiry"],
-                        lots=entry["lots"],
-                        entry_price=entry_price,
-                        entry_date=entry["entry_date"],
-                        current_price=exit_price,
-                        current_date=current_date,
-                        days_held=(current_date - entry["entry_date"]).days,
-                        gross_pnl=gross_pnl,
-                        costs=costs,
-                        net_pnl=net_pnl,
-                        exit_reason="expiry",
-                    ))
+        for li in range(len(legs)):
+            if pending_entries[li] and positions[li] is None:
+                if no_entry and bar_min >= no_entry:
+                    pending_entries[li] = False
+                    continue
+                _open_leg(li, bar, S, T)
+            pending_entries[li] = False
 
-                    # Rollover if enabled
-                    if cfg.auto_roll:
-                        new_expiry = _resolve_expiry(entry["expiry_formula"], current_date)
-                        new_dte = days_to_expiry(current_date, new_expiry)
-                        new_strike = _resolve_strike(
-                            entry["strike_formula"], spot, cfg.strike_interval,
-                            new_dte, cfg.volatility, entry["option_type"]
-                        )
-                        new_price = _calculate_leg_price(spot, new_strike, new_dte, cfg.volatility, entry["option_type"])
-                        leg_entries[j] = {
-                            **entry,
-                            "strike": new_strike,
-                            "expiry": new_expiry,
-                            "price": new_price,
-                            "entry_date": current_date,
-                            "entry_price": new_price,
-                        }
-                    else:
-                        leg_entries[j] = None
-
-        # Enter all legs at the start of the simulation
-        if i == 0:
-            for j, leg in enumerate(resolved_legs):
-                if leg_entries[j] is None:
-                    dte = days_to_expiry(current_date, leg["expiry"])
-                    real = _real(j, current_date)
-                    price = real if real is not None else _calculate_leg_price(
-                        spot, leg["strike"], dte, cfg.volatility, leg["option_type"]
-                    )
-                    leg_entries[j] = {
-                        "action": resolved_legs[j]["action"],
-                        "option_type": resolved_legs[j]["option_type"],
-                        "strike": resolved_legs[j]["strike"],
-                        "strike_formula": resolved_legs[j]["strike_formula"],
-                        "expiry": resolved_legs[j]["expiry"],
-                        "expiry_formula": resolved_legs[j]["expiry_formula"],
-                        "lots": resolved_legs[j]["lots"],
-                        "price": price,
-                        "entry_date": current_date,
-                        "entry_price": price,
-                    }
-
-        # Daily MTM
-        daily_mtm = 0.0
-        for j, entry in enumerate(leg_entries):
-            if entry is not None:
-                dte = days_to_expiry(current_date, entry["expiry"])
-                real = _real(j, current_date)
-                current_price = (
-                    real if real is not None
-                    else black_scholes_price(
-                        spot, entry["strike"], dte, cfg.volatility,
-                        rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
-                    )
-                )
-                qty = entry["lots"] * cfg.lot_size
-                if entry["action"] == "sell":
-                    daily_mtm += (entry["price"] - current_price) * qty
+        for li in range(len(legs)):
+            pos = positions[li]
+            if pos is None:
+                continue
+            premium = _leg_premium(S, pos.strike, T, pos.option_type)
+            if pos.sl_price is not None:
+                triggered = (pos.action == "buy" and premium <= pos.sl_price) or (pos.action == "sell" and premium >= pos.sl_price)
+                if triggered:
+                    _close_leg(li, bar, "stop_loss")
+                    if pos.reentry_on_sl and pos.reentry_count < pos.max_reentries:
+                        if no_reentry is None or bar_min < no_reentry:
+                            pending_entries[li] = True
+                            pos.reentry_count += 1
+                    continue
+            if pos.target_price is not None:
+                triggered = (pos.action == "buy" and premium >= pos.target_price) or (pos.action == "sell" and premium <= pos.target_price)
+                if triggered:
+                    _close_leg(li, bar, "target")
+                    if pos.reentry_on_target and pos.reentry_count < pos.max_reentries:
+                        if no_reentry is None or bar_min < no_reentry:
+                            pending_entries[li] = True
+                            pos.reentry_count += 1
+                    continue
+            if pos.trail_active and pos.trail_trigger > 0:
+                if pos.action == "buy":
+                    pos.trail_extreme = max(pos.trail_extreme, premium)
+                    if pos.trail_extreme >= pos.trail_trigger:
+                        new_sl = pos.trail_extreme - pos.trail_step
+                        if pos.sl_price is None or new_sl > pos.sl_price:
+                            pos.sl_price = new_sl
                 else:
-                    daily_mtm += (current_price - entry["price"]) * qty
+                    pos.trail_extreme = min(pos.trail_extreme, premium)
+                    if pos.trail_extreme <= pos.trail_trigger:
+                        new_sl = pos.trail_extreme + pos.trail_step
+                        if pos.sl_price is None or new_sl < pos.sl_price:
+                            pos.sl_price = new_sl
 
-        daily_values.append({
-            "date": current_date.isoformat(),
-            "spot": spot,
-            "mtm": round(daily_mtm, 2),
-            "legs_open": sum(1 for e in leg_entries if e is not None),
-        })
+        if legwise and legwise.square_off_on_leg_sl:
+            sl_hit = any(t.exit_reason == "stop_loss" and t.exit_time == bar.timestamp for t in trades)
+            if sl_hit:
+                for li in range(len(legs)):
+                    if positions[li] is not None:
+                        _close_leg(li, bar, "square_off_propagation")
 
-    # Close any remaining positions
-    for j, entry in enumerate(leg_entries):
-        if entry is not None:
-            final_spot = spot_prices[-1]
-            final_date = timestamps[-1].date() if hasattr(timestamps[-1], 'date') else date.today()
-            dte = days_to_expiry(final_date, entry["expiry"])
-            real = _real(j, final_date)
-            exit_price = (
-                real if real is not None
-                else black_scholes_price(
-                    final_spot, entry["strike"], dte, cfg.volatility,
-                    rate=0.06, dividend_yield=0.012, option_type=entry["option_type"]
-                )
-            )
-            qty = entry["lots"] * cfg.lot_size
-            if entry["action"] == "sell":
-                gross_pnl = (entry["price"] - exit_price) * qty
-            else:
-                gross_pnl = (exit_price - entry["price"]) * qty
-            costs = _leg_costs(exit_price, qty, is_sell=True)
-            total_costs = sum(costs.values())
-            net_pnl = gross_pnl - total_costs
-            leg_pnls.append(OptionsLegPnL(
-                leg_index=j,
-                action=entry["action"],
-                option_type=entry["option_type"],
-                strike=entry["strike"],
-                expiry=entry["expiry"],
-                lots=entry["lots"],
-                entry_price=entry["price"],
-                entry_date=entry["entry_date"],
-                current_price=exit_price,
-                current_date=final_date,
-                days_held=(final_date - entry["entry_date"]).days,
-                gross_pnl=gross_pnl,
-                costs=costs,
-                net_pnl=net_pnl,
-                exit_reason="end_of_data",
-            ))
+        if overall:
+            mtm = _compute_mtm(S, T)
+            overall_peak_pnl = max(overall_peak_pnl, mtm)
+            if overall.overall_sl is not None and mtm <= -overall.overall_sl:
+                for li in range(len(legs)):
+                    if positions[li] is not None:
+                        _close_leg(li, bar, "overall_sl")
+            if overall.overall_target is not None and mtm >= overall.overall_target:
+                for li in range(len(legs)):
+                    if positions[li] is not None:
+                        _close_leg(li, bar, "overall_target")
+            if overall.lock_profit is not None and overall.lock_at is not None:
+                if mtm >= overall.lock_at:
+                    overall_locked = max(overall_locked, overall.lock_profit)
+            if overall.lock_and_trail_profit is not None and overall.lock_and_trail_at is not None and overall.lock_and_trail_by is not None:
+                if mtm >= overall.lock_and_trail_at:
+                    extra = (mtm - overall.lock_and_trail_at) * (overall.lock_and_trail_by / max(overall.lock_and_trail_at, 1))
+                    overall_locked = max(overall_locked, overall.lock_and_trail_profit + extra)
+            if overall_locked > 0 and mtm <= overall_locked:
+                for li in range(len(legs)):
+                    if positions[li] is not None:
+                        _close_leg(li, bar, "lock_profit")
+            if overall.overall_trail_sl is not None and overall.overall_trail_every is not None and overall_peak_pnl > 0:
+                trail_sl_level = overall_peak_pnl - overall.overall_trail_sl
+                if mtm <= trail_sl_level:
+                    for li in range(len(legs)):
+                        if positions[li] is not None:
+                            _close_leg(li, bar, "overall_trail_sl")
 
-    # Build summary
-    summary = _build_options_summary(leg_pnls, daily_values, cfg)
-    cost_breakdown = _build_cost_breakdown(leg_pnls)
+        equity = cash
+        for pos in positions:
+            if pos is not None:
+                premium = _leg_premium(S, pos.strike, T, pos.option_type)
+                diff = premium - pos.entry_price
+                if pos.action == "sell":
+                    diff = -diff
+                equity += diff * pos.lots
+        equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(equity, 2)})
 
-    return OptionsBacktestResult(
-        legs=leg_pnls,
-        daily_values=daily_values,
-        summary=summary,
-        cost_breakdown=cost_breakdown,
-    )
+    for li in range(len(legs)):
+        if positions[li] is not None:
+            _close_leg(li, candles[-1], "end_of_data")
+    if equity_curve:
+        equity_curve[-1]["equity"] = round(cash, 2)
+
+    summary = _build_summary(trades, equity_curve, initial_capital, total_costs, definition.timeframe)
+    return OptionsBacktestResult(trades=trades, equity_curve=equity_curve, summary=summary)
 
 
-def _build_options_summary(legs: list[OptionsLegPnL], daily_values: list[dict], cfg: OptionsConfig) -> dict:
-    """Build summary statistics for options backtest."""
-    if not legs:
-        return {}
-
-    total_gross_pnl = sum(leg.gross_pnl for leg in legs)
-    total_net_pnl = sum(leg.net_pnl for leg in legs)
-    total_costs = sum(sum(leg.costs.values()) for leg in legs)
-    wins = [leg for leg in legs if leg.net_pnl > 0]
-    losses = [leg for leg in legs if leg.net_pnl <= 0]
-
-    # Daily equity curve
-    equity = [cfg.initial_capital]
-    for dv in daily_values:
-        equity.append(equity[-1] + dv["mtm"])
-    equity_peak = max(equity) if equity else cfg.initial_capital
-    max_dd = max((equity_peak - e) / equity_peak * 100 for e in equity) if equity else 0.0
-
+def _build_summary(trades, equity_curve, initial_capital, total_costs, timeframe):
+    final_equity = equity_curve[-1]["equity"] if equity_curve else initial_capital
+    net_pnl = final_equity - initial_capital
+    wins = [t for t in trades if t.pnl > 0]
+    losses = [t for t in trades if t.pnl <= 0]
+    gross_win = sum(t.pnl for t in wins)
+    gross_loss = abs(sum(t.pnl for t in losses))
+    max_dd = 0.0
+    peak = initial_capital
+    for pt in equity_curve:
+        peak = max(peak, pt["equity"])
+        if peak > 0:
+            max_dd = max(max_dd, (peak - pt["equity"]) / peak * 100.0)
     return {
-        "initial_capital": cfg.initial_capital,
-        "final_equity": round(equity[-1], 2) if equity else cfg.initial_capital,
-        "net_pnl": round(total_net_pnl, 2),
-        "gross_pnl": round(total_gross_pnl, 2),
-        "return_pct": round(total_net_pnl / cfg.initial_capital * 100, 2),
-        "total_legs": len(legs),
-        "winning_legs": len(wins),
-        "losing_legs": len(losses),
-        "win_rate": round(len(wins) / len(legs) * 100, 2) if legs else 0,
-        "avg_win": round(sum(leg.net_pnl for leg in wins) / len(wins), 2) if wins else 0,
-        "avg_loss": round(abs(sum(leg.net_pnl for leg in losses) / len(losses)), 2) if losses else 0,
-        "max_drawdown_pct": round(max_dd, 2),
+        "initial_capital": initial_capital,
+        "final_equity": round(final_equity, 2),
+        "net_pnl": round(net_pnl, 2),
+        "return_pct": round(net_pnl / initial_capital * 100.0, 4),
+        "total_trades": len(trades),
+        "winning_trades": len(wins),
+        "losing_trades": len(losses),
+        "win_rate": round(len(wins) / len(trades) * 100.0, 2) if trades else 0.0,
+        "profit_factor": round(gross_win / gross_loss, 4) if gross_loss > 0 else round(gross_win, 4) if gross_win > 0 else 0.0,
+        "avg_win": round(gross_win / len(wins), 2) if wins else 0.0,
+        "avg_loss": round(-gross_loss / len(losses), 2) if losses else 0.0,
+        "largest_win": round(max((t.pnl for t in trades), default=0.0), 2),
+        "largest_loss": round(min((t.pnl for t in trades), default=0.0), 2),
+        "max_drawdown_pct": round(max_dd, 4),
+        "sharpe_ratio": 0.0,
         "total_costs": round(total_costs, 2),
-        "volatility_assumption": cfg.volatility,
+        "timeframe": timeframe,
     }
-
-
-def _build_cost_breakdown(legs: list[OptionsLegPnL]) -> dict[str, float]:
-    """Aggregate cost breakdown across all legs."""
-    totals: dict[str, float] = {}
-    for leg in legs:
-        for key, value in leg.costs.items():
-            totals[key] = totals.get(key, 0.0) + value
-    return {k: round(v, 2) for k, v in totals.items()}
-
-
-def run_options_backtest_quick(
-    legs: list[dict],
-    candles: Sequence[Candle],
-    config: OptionsConfig | None = None,
-) -> OptionsBacktestResult:
-    """Quick backtest for options legs without full strategy definition.
-
-    Args:
-        legs: List of leg dicts with action, option_type, strike, lots
-        candles: Historical underlying candles
-        config: Options backtest configuration
-
-    Returns:
-        OptionsBacktestResult
-    """
-    from app.quant.schema import InstrumentRef, OptionLeg, PositionConfig, StrategyDefinition
-
-    leg_models = [
-        OptionLeg(
-            action=leg.get("action", "buy"),
-            option_type=leg.get("option_type", "CE"),
-            strike=leg.get("strike"),
-            strike_formula=leg.get("strike_formula", "ATM"),
-            lots=leg.get("lots", 1),
-            expiry_formula=leg.get("expiry_formula", "THIS_WEEK"),
-        )
-        for leg in legs
-    ]
-
-    definition = StrategyDefinition(
-        version=1,
-        timeframe="1d",
-        instrument=InstrumentRef(symbol="NIFTY", exchange="NSE", segment="index"),
-        legs=leg_models,
-        entry={"logic": "ALL", "conditions": [{"left": {"kind": "constant", "value": 1}, "op": ">", "right": {"kind": "constant", "value": 0}}]},
-        position=PositionConfig(direction="both"),
-    )
-
-    cfg = config or OptionsConfig()
-    return run_options_backtest(definition, candles, cfg)

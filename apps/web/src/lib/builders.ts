@@ -59,6 +59,11 @@ export interface StrategyDefinitionV1 {
     capital_pct: number | null;
   };
   legs?: OptionLeg[];
+  // AlgoTest-parity options fields
+  overall?: OverallConfig | null;
+  entry_momentum?: EntryMomentumConfig | null;
+  time_control?: TimeControlConfig | null;
+  legwise?: LegwiseSettings | null;
 }
 
 export interface OptionLeg {
@@ -68,6 +73,61 @@ export interface OptionLeg {
   strike_offset?: number | null;
   lots?: number;
   expiry?: string | null;
+  // Per-leg stop loss
+  sl_mode?: "pts" | "%" | "underlying_pts" | "underlying_pct" | null;
+  sl_value?: number | null;
+  // Per-leg target
+  target_mode?: "pts" | "%" | "underlying_pts" | "underlying_pct" | null;
+  target_value?: number | null;
+  // Per-leg trailing stop
+  trail_mode?: "pts" | "%" | null;
+  trail_step?: number | null;
+  trail_by?: number | null;
+  delta_trail?: boolean;
+  // Re-entry
+  reentry_on_sl?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | null;
+  reentry_on_target?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | null;
+  max_reentries?: number;
+  // Lazy leg overrides
+  lazy_sl_mode?: "pts" | "%" | null;
+  lazy_sl_value?: number | null;
+  lazy_target_mode?: "pts" | "%" | null;
+  lazy_target_value?: number | null;
+  lazy_action?: "buy" | "sell" | null;
+  lazy_option_type?: "CE" | "PE" | null;
+  lazy_strike_offset?: number | null;
+  // Square-off behavior
+  square_off?: "partial" | "complete";
+}
+
+export interface LegwiseSettings {
+  trail_sl_to_breakeven: "none" | "sl_legs" | "all_legs";
+  square_off_on_leg_sl: boolean;
+}
+
+export interface OverallConfig {
+  overall_sl: number | null;
+  overall_target: number | null;
+  overall_trail_sl: number | null;
+  overall_trail_every: number | null;
+  lock_profit: number | null;
+  lock_at: number | null;
+  lock_and_trail_profit: number | null;
+  lock_and_trail_at: number | null;
+  lock_and_trail_by: number | null;
+}
+
+export interface EntryMomentumConfig {
+  enabled: boolean;
+  direction: "up" | "down";
+  mode: "pts" | "%";
+  value: number;
+}
+
+export interface TimeControlConfig {
+  no_entry_after: string | null;
+  no_reentry_after: string | null;
+  time_exit: string | null;
 }
 
 export const OPERATORS = [

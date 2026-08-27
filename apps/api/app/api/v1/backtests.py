@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.backtest import BacktestConfig, BacktestError, run_backtest
+from app.backtest.options_engine import OptionsBacktestError, run_options_backtest
 from app.core.deps import CurrentUser, DbSession
 from app.models import BacktestRun, Strategy
 from app.quant.schema import StrategyDefinition
@@ -89,16 +90,24 @@ async def create_backtest(
     await db.refresh(run)
 
     try:
-        result = run_backtest(
-            definition,
-            candles,
-            BacktestConfig(
+        if definition.builder == "legs" and definition.legs:
+            result = run_options_backtest(
+                definition,
+                candles,
                 initial_capital=payload.initial_capital,
                 costs_pct=payload.costs_pct,
-                slippage_pct=payload.slippage_pct,
-            ),
-        )
-    except BacktestError as exc:
+            )
+        else:
+            result = run_backtest(
+                definition,
+                candles,
+                BacktestConfig(
+                    initial_capital=payload.initial_capital,
+                    costs_pct=payload.costs_pct,
+                    slippage_pct=payload.slippage_pct,
+                ),
+            )
+    except (BacktestError, OptionsBacktestError) as exc:
         run.status = "failed"
         run.result_summary = {"error": str(exc)}
         run.finished_at = datetime.now(UTC)

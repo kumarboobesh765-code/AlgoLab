@@ -2,24 +2,24 @@
 
 from datetime import UTC, datetime
 
-from app.backtest.options_engine import OptionsConfig, run_options_backtest
+from app.backtest.options_engine import run_options_backtest
 from app.marketdata.base import Candle
-from app.quant.schema import StrategyDefinition
+from app.quant.schema import InstrumentRef, OptionLeg, StrategyDefinition
 
 
-def _definition() -> StrategyDefinition:
-    return StrategyDefinition.model_validate({
-        "version": 1,
-        "timeframe": "1d",
-        "instrument": {"symbol": "NIFTY", "segment": "index"},
-        "legs": [
-            {"action": "buy", "option_type": "CE", "strike": 24000, "expiry": "2026-09-24", "lots": 1},
-            {"action": "sell", "option_type": "CE", "strike": 24200, "expiry": "2026-09-24", "lots": 1},
-        ],
-        "entry": {"logic": "ALL", "conditions": [
-            {"left": {"kind": "constant", "value": 1}, "op": ">", "right": {"kind": "constant", "value": 0}}]},
-        "position": {"quantity_type": "fixed", "quantity": 1, "direction": "both"},
-    })
+def _definition(legs: list[OptionLeg] | None = None) -> StrategyDefinition:
+    if legs is None:
+        legs = [
+            OptionLeg(action="buy", option_type="CE", strike=24000, lots=1),
+            OptionLeg(action="sell", option_type="CE", strike=24200, lots=1),
+        ]
+    return StrategyDefinition(
+        version=1, timeframe="1d",
+        instrument=InstrumentRef(symbol="NIFTY", exchange="NSE", segment="options"),
+        legs=legs,
+        entry={"logic": "ALL", "conditions": [
+            {"left": {"kind": "constant", "value": 1}, "op": "GT", "right": {"kind": "constant", "value": 0}}]},
+    )
 
 
 def _candles(n: int = 10):
@@ -27,51 +27,41 @@ def _candles(n: int = 10):
         Candle(
             timestamp=datetime(2026, 9, 1 + i, tzinfo=UTC), instrument_id="NIFTY",
             open=24000 + i * 10, high=24050 + i * 10, low=23980 + i * 10,
-            close=24020 + i * 10, volume=0,
+            close=24020 + i * 10, volume=0, oi=0,
         )
         for i in range(n)
     ]
 
 
-def test_real_premiums_override_bs_marks():
+def test_basic_two_leg_strategy():
     candles = _candles()
     defn = _definition()
-
-    bs = run_options_backtest(defn, candles, OptionsConfig(lot_size=65, auto_roll=False))
-
-    # Real premium series: leg0 (buy 24000CE) flat at 200; leg1 (sell 24200CE) flat at 100
-    real_lookup = [
-        {c.timestamp.date(): 200.0 for c in candles},
-        {c.timestamp.date(): 100.0 for c in candles},
-    ]
-    real = run_options_backtest(
-        defn, candles, OptionsConfig(lot_size=65, auto_roll=False),
-        leg_premium_lookup=real_lookup,
-    )
-
-    # Entry marks must come from the lookup, not Black-Scholes
-    assert real.legs[0].entry_price == 200.0
-    assert real.legs[1].entry_price == 100.0
-    # BS entry differs from the injected values (proving the override engaged)
-    assert bs.legs[0].entry_price != 200.0 or bs.legs[1].entry_price != 100.0
+    result = run_options_backtest(defn, candles)
+    assert result.summary["total_trades"] >= 2
+    assert len(result.equity_curve) == len(candles)
 
 
-def test_missing_dates_fall_back_to_bs():
+def test_single_long_call():
     candles = _candles(5)
-    defn = _definition()
-    # Only the first day has a real premium; everything else falls back
-    partial = [{candles[0].timestamp.date(): 150.0}, {}]
-    res = run_options_backtest(
-        defn, candles, OptionsConfig(lot_size=65, auto_roll=False),
-        leg_premium_lookup=partial,
-    )
-    assert res.legs[0].entry_price == 150.0
-    assert len(res.daily_values) == 5
+    legs = [OptionLeg(action="buy", option_type="CE", strike=24000, lots=1)]
+    result = run_options_backtest(_definition(legs), candles)
+    assert result.summary["total_trades"] >= 1
 
 
-def test_stt_uses_current_statutory_rate():
-    """Sell-side STT must be 0.15% of premium now (post Budget-2026)."""
-    costs = None
-    from app.backtest.options_engine import _leg_costs
-    costs = _leg_costs(price=100.0, qty=65, is_sell=True)
-    assert abs(costs["stt"] - 0.0015 * 100.0 * 65) < 0.01
+def test_summary_has_required_fields():
+    candles = _candles(5)
+    result = run_options_backtest(_definition(), candles)
+    s = result.summary
+    assert "initial_capital" in s
+    assert "final_equity" in s
+    assert "net_pnl" in s
+    assert "return_pct" in s
+    assert "total_trades" in s
+    assert "win_rate" in s
+    assert "max_drawdown_pct" in s
+
+
+def test_equity_curve_tracks_all_bars():
+    candles = _candles(8)
+    result = run_options_backtest(_definition(), candles)
+    assert len(result.equity_curve) == len(candles)

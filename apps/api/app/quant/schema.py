@@ -80,6 +80,57 @@ class PositionConfig(BaseModel):
     capital_pct: float | None = Field(default=None, gt=0, le=100)
 
 
+class LegwiseSettings(BaseModel):
+    """Cross-leg interaction settings (e.g. breakeven trail, square-off propagation)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # When any leg's SL hits, move SL to breakeven for:
+    trail_sl_to_breakeven: Literal["none", "sl_legs", "all_legs"] = "none"
+    # Square-off propagation: if one leg SL hits, square off all legs
+    square_off_on_leg_sl: bool = False
+
+
+class OverallConfig(BaseModel):
+    """Strategy-level overall risk management in MTM (mark-to-market) terms."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    overall_sl: float | None = Field(default=None, description="MTM stop loss in ₹")
+    overall_target: float | None = Field(default=None, description="MTM target in ₹")
+    # Trailing: trail overall SL by Y for every X profit
+    overall_trail_sl: float | None = Field(default=None, description="Trail step in ₹")
+    overall_trail_every: float | None = Field(default=None, description="Trail trigger every ₹")
+    # Lock profit: lock X when profit reaches Y
+    lock_profit: float | None = Field(default=None, description="Lock ₹ profit")
+    lock_at: float | None = Field(default=None, description="when MTM reaches ₹")
+    # Lock and trail: lock X at Y, then trail
+    lock_and_trail_profit: float | None = Field(default=None, description="Lock ₹ at threshold")
+    lock_and_trail_at: float | None = Field(default=None, description="MTM threshold ₹")
+    lock_and_trail_by: float | None = Field(default=None, description="Trail locked profit by ₹")
+
+
+class EntryMomentumConfig(BaseModel):
+    """Enter trade only when combined premium moves by X from start."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    direction: Literal["up", "down"] = "up"
+    mode: Literal["pts", "%"] = "pts"
+    value: float = Field(default=0, ge=0)
+
+
+class TimeControlConfig(BaseModel):
+    """Time-based entry and exit controls."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    no_entry_after: str | None = Field(default=None, description="HH:MM — no new entries after")
+    no_reentry_after: str | None = Field(default=None, description="HH:MM — no re-entries after")
+    time_exit: str | None = Field(default=None, description="HH:MM — force exit all at")
+
+
 class OptionLeg(BaseModel):
     """A single F&O option leg (used by the Leg Builder / options strategies)."""
 
@@ -94,6 +145,37 @@ class OptionLeg(BaseModel):
     lots_formula: str | None = None  # e.g., "DELTA_NEUTRAL", "CAPITAL_PCT:10"
     expiry: str | None = None
     expiry_formula: str | None = None  # e.g., "THIS_WEEK", "NEXT_WEEK", "THIS_MONTH", "NEXT_MONTH"
+
+    # Per-leg stop loss
+    sl_mode: Literal["pts", "%", "underlying_pts", "underlying_pct"] | None = None
+    sl_value: float | None = None
+
+    # Per-leg target
+    target_mode: Literal["pts", "%", "underlying_pts", "underlying_pct"] | None = None
+    target_value: float | None = None
+
+    # Per-leg trailing stop loss
+    trail_mode: Literal["pts", "%"] | None = None
+    trail_step: float | None = None  # move SL by this much
+    trail_by: float | None = None  # for every this much favor
+    delta_trail: bool = False  # trail when delta moves in favor
+
+    # Re-entry after SL / Target
+    reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg"] | None = None
+    reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg"] | None = None
+    max_reentries: int = Field(default=0, ge=0, le=20)
+
+    # Lazy leg override params (when reentry mode is "lazy_leg")
+    lazy_sl_mode: Literal["pts", "%"] | None = None
+    lazy_sl_value: float | None = None
+    lazy_target_mode: Literal["pts", "%"] | None = None
+    lazy_target_value: float | None = None
+    lazy_action: Literal["buy", "sell"] | None = None
+    lazy_option_type: Literal["CE", "PE"] | None = None
+    lazy_strike_offset: int | None = None
+
+    # Square-off behavior when this leg's SL/Target hits
+    square_off: Literal["partial", "complete"] = "partial"
 
 
 class OptionGreeks(BaseModel):
@@ -156,6 +238,11 @@ class StrategyDefinition(BaseModel):
     exit: ConditionGroup | None = None
     risk: RiskConfig | None = None
     position: PositionConfig = Field(default_factory=PositionConfig)
+    # AlgoTest-parity options fields
+    overall: OverallConfig | None = None
+    entry_momentum: EntryMomentumConfig | None = None
+    time_control: TimeControlConfig | None = None
+    legwise: LegwiseSettings | None = None
 
     @field_validator("timeframe")
     @classmethod
