@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from app.marketdata.base import Candle
+from app.quant.options.formulas import StrikeResult
 from app.quant.schema import StrategyDefinition
 
 RISK_FREE = 0.06
@@ -114,6 +115,18 @@ class OptionsBacktestResult:
     trades: list[LegTrade] = field(default_factory=list)
     equity_curve: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    legs: list[dict] = field(default_factory=list)
+    daily_values: list[dict] = field(default_factory=list)
+    cost_breakdown: dict = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class OptionsConfig:
+    initial_capital: float = 100_000.0
+    costs_pct: float = 0.03
+    volatility: float = 0.20
+    lot_size: int = 50
+    auto_roll: bool = True
 
 
 def _compute_sl_target(leg, entry_price: float, entry_underlying: float, step: int) -> tuple[float | None, float | None]:
@@ -145,6 +158,7 @@ def run_options_backtest(
     candles: Sequence[Candle],
     initial_capital: float = 100_000.0,
     costs_pct: float = 0.03,
+    leg_premium_lookup: list[dict] | None = None,
 ) -> OptionsBacktestResult:
     if len(candles) < 2:
         raise OptionsBacktestError("Need at least 2 candles")
@@ -162,6 +176,7 @@ def run_options_backtest(
     positions: list[LegPosition | None] = [None] * len(legs)
     pending_entries: list[bool] = [True] * len(legs)
     momentum_waiting: list[bool] = [False] * len(legs)
+    rb_reentry: list[bool] = [False] * len(legs)
     trades: list[LegTrade] = []
     equity_curve: list[dict] = []
     total_costs = 0.0
@@ -173,15 +188,112 @@ def run_options_backtest(
     skip_candles = definition.skip_initial_candles or 0
     max_daily = definition.max_position_in_a_day or 0
     overall_reentry_pending = False
+    rb_cfg = definition.range_breakout
+    rb_start = _parse_time_hm(rb_cfg.start_time) if rb_cfg else None
+    rb_end = _parse_time_hm(rb_cfg.end_time) if rb_cfg else None
+    rb_high: float | None = None
+    rb_low: float | None = None
+    rb_captured = False
+    rb_entered = False
 
     def _leg_premium(S: float, strike: float, T: float, opt_type: str) -> float:
         return max(_bs_price(S, strike, T, iv, opt_type == "CE"), 0.01)
 
+    def _build_synthetic_chain(S: float, T: float, opt_type: str, num_strikes: int = 21) -> tuple[list[float], list[float]]:
+        atm = round(S / step) * step
+        half = num_strikes // 2
+        strikes = [atm + (i - half) * step for i in range(num_strikes)]
+        premiums = [_leg_premium(S, k, T, opt_type) for k in strikes]
+        return strikes, premiums
+
+    def _resolve_strike(leg, S: float, T: float) -> float:
+        if leg.strike is not None and leg.strike > 0:
+            return leg.strike
+        if leg.strike_formula:
+            try:
+                from app.quant.options.formulas import parse_strike_formula
+                res = parse_strike_formula(leg.strike_formula, S, step, T * 252, iv, leg.option_type)
+                if res.strike > 0:
+                    return res.strike
+            except Exception:
+                pass
+        if leg.strike_selection:
+            strikes, premiums = _build_synthetic_chain(S, T, leg.option_type)
+            try:
+                from app.quant.options.formulas import (
+                    parse_atm_straddle_premium_pct_formula,
+                    parse_closest_premium_formula,
+                    parse_delta_range_formula,
+                    parse_premium_ge_formula,
+                    parse_straddle_width_formula,
+                )
+                sel = leg.strike_selection
+                val = leg.strike_selection_value or 0
+                val2 = leg.strike_selection_value_2
+                if sel == "premium_ge":
+                    res = parse_premium_ge_formula(val, strikes, premiums, leg.option_type)
+                elif sel == "premium_le":
+                    rev_prem = [float("inf") - p for p in premiums]
+                    res = parse_premium_ge_formula(val, strikes, rev_prem, leg.option_type)
+                elif sel == "premium_range" and val2 is not None:
+                    candidates = [(s, p) for s, p in zip(strikes, premiums) if val <= p <= val2]
+                    if candidates:
+                        idx = len(candidates) // 2
+                        res = StrikeResult(strike=candidates[idx][0], strike_offset=0, formula_used=f"PREMIUM_RANGE:{val}:{val2}")
+                    else:
+                        res = StrikeResult(strike=strikes[len(strikes)//2], strike_offset=0, formula_used="PREMIUM_RANGE:NONE")
+                elif sel == "closest_premium":
+                    res = parse_closest_premium_formula(val, strikes, premiums)
+                elif sel == "closest_delta" and val > 0:
+                    atm = round(S / step) * step
+                    best_strike = atm
+                    best_diff = float("inf")
+                    for offset in range(1, 11):
+                        for sign in [1, -1]:
+                            strike = atm + sign * offset * step
+                            from app.quant.options.pricing import calculate_greeks
+                            greeks = calculate_greeks(S, strike, T * 252, iv, 0.0, 0.0, leg.option_type)
+                            diff = abs(abs(greeks.delta) - val)
+                            if diff < best_diff:
+                                best_diff = diff
+                                best_strike = strike
+                    res = StrikeResult(strike=best_strike, strike_offset=int((best_strike - atm) / step), formula_used=f"CLOSEST_DELTA:{val}")
+                elif sel == "delta_range" and val2 is not None:
+                    res = parse_delta_range_formula(S, step, val, val2, T * 252, iv, leg.option_type)
+                elif sel == "straddle_width":
+                    res = parse_straddle_width_formula(S, step, val, T * 252, iv, leg.option_type)
+                elif sel == "atm_straddle_premium_pct":
+                    res = parse_atm_straddle_premium_pct_formula(S, step, val, T * 252, iv, leg.option_type)
+                elif sel == "strike_type" and leg.strike_offset is not None:
+                    offset = leg.strike_offset
+                    if leg.strike_formula and leg.strike_formula.startswith("ITM"):
+                        offset = -abs(offset)
+                    elif leg.strike_formula and leg.strike_formula.startswith("OTM"):
+                        offset = abs(offset)
+                    atm = round(S / step) * step
+                    strike = atm + offset * step
+                    res = StrikeResult(strike=strike, strike_offset=offset, formula_used=f"STRIKE_TYPE:{offset}")
+                elif sel == "pct_of_atm" and val != 0:
+                    atm = round(S / step) * step
+                    target = atm * (1 + val / 100.0)
+                    strike = round(target / step) * step
+                    res = StrikeResult(strike=strike, strike_offset=int((strike - atm) / step), formula_used=f"PCT_OF_ATM:{val}")
+                elif sel == "synthetic_future":
+                    synthetic = S * 1.02 if leg.option_type == "CE" else S * 0.98
+                    strike = round(synthetic / step) * step
+                    res = StrikeResult(strike=strike, strike_offset=int((strike - round(S / step) * step) / step), formula_used="SYNTHETIC_FUTURE")
+                else:
+                    res = StrikeResult(strike=round(S / step) * step, strike_offset=0, formula_used="DEFAULT")
+                if res.strike > 0:
+                    return res.strike
+            except Exception:
+                pass
+        return round(S / step) * step + (leg.strike_offset or 0) * step
+
     def _open_leg(li: int, bar, S: float, T: float) -> None:
         nonlocal cash, total_costs
         leg = legs[li]
-        strike_offset = leg.strike_offset or 0
-        strike = round(S / step) * step + strike_offset * step
+        strike = _resolve_strike(leg, S, T)
         premium = _leg_premium(S, strike, T, leg.option_type)
         lots = leg.lots or 1
 
@@ -267,6 +379,21 @@ def run_options_backtest(
         if bar_day and bar_day != current_day:
             current_day = bar_day
             daily_entry_count = 0
+            if rb_cfg:
+                rb_captured = False
+                rb_entered = False
+                rb_high = None
+                rb_low = None
+
+        # Range breakout: capture range high/low
+        if rb_cfg and not rb_captured and not rb_entered:
+            if rb_start is not None and rb_end is not None and rb_start <= bar_min < rb_end:
+                if rb_high is None or S > rb_high:
+                    rb_high = S
+                if rb_low is None or S < rb_low:
+                    rb_low = S
+            elif rb_end is not None and bar_min >= rb_end and rb_high is not None:
+                rb_captured = True
 
         # Skip initial candles
         if i < skip_candles:
@@ -300,6 +427,7 @@ def run_options_backtest(
                 mode = pos.momentum_mode
                 val = pos.momentum_value
                 triggered = False
+                premium = _leg_premium(S, pos.strike, T, pos.option_type)
                 if mode == "pts_up" and premium >= ref + val:
                     triggered = True
                 elif mode == "pts_down" and premium <= ref - val:
@@ -344,6 +472,27 @@ def run_options_backtest(
                 if max_daily > 0 and daily_entry_count >= max_daily:
                     pending_entries[li] = False
                     continue
+                use_rb = rb_cfg and rb_captured and not rb_entered
+                if use_rb and rb_reentry[li]:
+                    if rb_cfg and rb_captured and not rb_entered:
+                        breakout = False
+                        if rb_cfg.entry_on == "high" and rb_high is not None and S > rb_high:
+                            breakout = True
+                        elif rb_cfg.entry_on == "low" and rb_low is not None and S < rb_low:
+                            breakout = True
+                        if not breakout:
+                            continue
+                        rb_reentry[li] = False
+                        rb_entered = True
+                elif rb_cfg and rb_captured and not rb_entered:
+                    breakout = False
+                    if rb_cfg.entry_on == "high" and rb_high is not None and S > rb_high:
+                        breakout = True
+                    elif rb_cfg.entry_on == "low" and rb_low is not None and S < rb_low:
+                        breakout = True
+                    if not breakout:
+                        continue
+                    rb_entered = True
                 _open_leg(li, bar, S, T)
                 if positions[li] is not None and not positions[li].momentum_pending:
                     daily_entry_count += 1
@@ -360,8 +509,13 @@ def run_options_backtest(
                     _close_leg(li, bar, "stop_loss")
                     if pos.reentry_on_sl and pos.reentry_count < pos.max_reentries:
                         if no_reentry is None or bar_min < no_reentry:
-                            pending_entries[li] = True
-                            pos.reentry_count += 1
+                            if pos.reentry_on_sl == "range_breakout" and rb_cfg:
+                                rb_reentry[li] = True
+                                pending_entries[li] = True
+                                pos.reentry_count += 1
+                            else:
+                                pending_entries[li] = True
+                                pos.reentry_count += 1
                     continue
             if pos.target_price is not None:
                 triggered = (pos.action == "buy" and premium >= pos.target_price) or (pos.action == "sell" and premium <= pos.target_price)
@@ -369,8 +523,13 @@ def run_options_backtest(
                     _close_leg(li, bar, "target")
                     if pos.reentry_on_target and pos.reentry_count < pos.max_reentries:
                         if no_reentry is None or bar_min < no_reentry:
-                            pending_entries[li] = True
-                            pos.reentry_count += 1
+                            if pos.reentry_on_target == "range_breakout" and rb_cfg:
+                                rb_reentry[li] = True
+                                pending_entries[li] = True
+                                pos.reentry_count += 1
+                            else:
+                                pending_entries[li] = True
+                                pos.reentry_count += 1
                     continue
             if pos.trail_active and pos.trail_trigger > 0:
                 if pos.action == "buy":
@@ -435,7 +594,7 @@ def run_options_backtest(
                     reentry_mode = overall.overall_reentry_on_sl
                 elif any(t.exit_reason == "overall_target" for t in trades if t.exit_time == bar.timestamp):
                     reentry_mode = overall.overall_reentry_on_target
-                if reentry_mode and reentry_mode in ("asap", "asap_reverse", "cost", "cost_reverse"):
+                if reentry_mode and reentry_mode in ("asap", "asap_reverse", "cost", "cost_reverse", "reexecute", "reexecute_reverse"):
                     overall_reentry_pending = True
             if overall_reentry_pending:
                 all_closed = all(p is None for p in positions)
@@ -443,8 +602,18 @@ def run_options_backtest(
                     overall_reentry_pending = False
                     overall_locked = 0.0
                     overall_peak_pnl = 0.0
+                    reentry_mode = None
+                    if any(t.exit_reason == "overall_sl" for t in trades if t.exit_time == bar.timestamp):
+                        reentry_mode = overall.overall_reentry_on_sl
+                    elif any(t.exit_reason == "overall_target" for t in trades if t.exit_time == bar.timestamp):
+                        reentry_mode = overall.overall_reentry_on_target
+                    if reentry_mode in ("reexecute_reverse",):
+                        for li in range(len(legs)):
+                            legs[li].action = "sell" if legs[li].action == "buy" else "buy"
+                            legs[li].option_type = "PE" if legs[li].option_type == "CE" else "CE"
                     for li in range(len(legs)):
                         pending_entries[li] = True
+                        momentum_waiting[li] = False
 
         equity = cash
         for pos in positions:
@@ -463,7 +632,22 @@ def run_options_backtest(
         equity_curve[-1]["equity"] = round(cash, 2)
 
     summary = _build_summary(trades, equity_curve, initial_capital, total_costs, definition.timeframe)
-    return OptionsBacktestResult(trades=trades, equity_curve=equity_curve, summary=summary)
+    legs = [t.as_dict() for t in trades]
+    daily_values = _build_daily_values(equity_curve, candles)
+    cost_breakdown = {"total_costs": round(total_costs, 2), "costs_pct": costs_pct}
+    return OptionsBacktestResult(trades=trades, equity_curve=equity_curve, summary=summary, legs=legs, daily_values=daily_values, cost_breakdown=cost_breakdown)
+
+
+def _build_daily_values(equity_curve: list[dict], candles: Sequence[Candle]) -> list[dict]:
+    """Group equity curve points by date for daily MTM snapshots."""
+    daily: dict[str, dict] = {}
+    for pt in equity_curve:
+        day = pt["time"][:10]
+        if day not in daily:
+            daily[day] = {"date": day, "equity": pt["equity"], "bars": 0}
+        daily[day]["equity"] = pt["equity"]
+        daily[day]["bars"] += 1
+    return sorted(daily.values(), key=lambda x: x["date"])
 
 
 def _build_summary(trades, equity_curve, initial_capital, total_costs, timeframe):

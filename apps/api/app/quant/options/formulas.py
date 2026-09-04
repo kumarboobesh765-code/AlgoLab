@@ -555,3 +555,115 @@ def parse_strike_formula(
 
     atm = calculate_atm_strike(spot, strike_interval)
     return StrikeResult(strike=atm, strike_offset=0, formula_used=f"UNKNOWN:{formula}")
+
+
+def parse_premium_ge_formula(
+    premium: float,
+    strikes: list[float],
+    premiums: list[float],
+    option_type: Literal["CE", "PE"] = "CE",
+) -> StrikeResult:
+    """Select strike with premium >= target."""
+    candidates = [(s, p) for s, p in zip(strikes, premiums) if p >= premium]
+    if not candidates:
+        return StrikeResult(strike=strikes[0], strike_offset=0, formula_used="PREMIUM>=NONE")
+    if option_type == "CE":
+        strike, prem = min(candidates, key=lambda x: x[0])
+    else:
+        strike, prem = max(candidates, key=lambda x: x[0])
+    atm = strikes[len(strikes) // 2]
+    offset = int((strike - atm) / (strikes[1] - strikes[0]) if len(strikes) > 1 else 1)
+    return StrikeResult(strike=strike, strike_offset=offset, formula_used=f"PREMIUM>={premium}")
+
+
+def parse_closest_premium_formula(
+    premium: float,
+    strikes: list[float],
+    premiums: list[float],
+) -> StrikeResult:
+    """Select strike whose premium is closest to target."""
+    idx = min(range(len(premiums)), key=lambda i: abs(premiums[i] - premium))
+    strike = strikes[idx]
+    atm = strikes[len(strikes) // 2]
+    step = strikes[1] - strikes[0] if len(strikes) > 1 else 50
+    offset = int((strike - atm) / step)
+    return StrikeResult(strike=strike, strike_offset=offset, formula_used=f"CLOSEST_PREMIUM:{premium}")
+
+
+def parse_delta_range_formula(
+    spot: float,
+    strike_interval: float,
+    delta_lo: float,
+    delta_hi: float,
+    days_to_expiry: float,
+    volatility: float,
+    option_type: Literal["CE", "PE"] = "CE",
+    rate: float = 0.0,
+    dividend_yield: float = 0.0,
+) -> StrikeResult:
+    """Find strike whose delta falls within [delta_lo, delta_hi]."""
+    from app.quant.options.pricing import calculate_greeks
+    atm = calculate_atm_strike(spot, strike_interval)
+    search_range = 10
+    for offset in range(search_range + 1):
+        for sign in [1, -1]:
+            strike = atm + sign * offset * strike_interval
+            greeks = calculate_greeks(spot, strike, days_to_expiry, volatility, rate, dividend_yield, option_type)
+            delta = abs(greeks.delta)
+            if delta_lo <= delta <= delta_hi:
+                return StrikeResult(strike=strike, strike_offset=sign * offset, formula_used=f"DELTA_RANGE:{delta_lo}:{delta_hi}")
+    return StrikeResult(strike=atm, strike_offset=0, formula_used="DELTA_RANGE:NONE")
+
+
+def parse_straddle_width_formula(
+    spot: float,
+    strike_interval: float,
+    width_mult: float,
+    days_to_expiry: float,
+    volatility: float,
+    option_type: Literal["CE", "PE"] = "CE",
+    rate: float = 0.0,
+    dividend_yield: float = 0.0,
+) -> StrikeResult:
+    """Strike = ATM ± width_mult * straddle_width."""
+    from app.quant.options.pricing import calculate_greeks
+    atm = calculate_atm_strike(spot, strike_interval)
+    ce_prem = calculate_greeks(spot, atm, days_to_expiry, volatility, rate, dividend_yield, "CE").price
+    pe_prem = calculate_greeks(spot, atm, days_to_expiry, volatility, rate, dividend_yield, "PE").price
+    straddle_width = ce_prem + pe_prem
+    target = atm + width_mult * straddle_width if option_type == "CE" else atm - width_mult * straddle_width
+    strike = round(target / strike_interval) * strike_interval
+    offset = int((strike - atm) / strike_interval)
+    return StrikeResult(strike=strike, strike_offset=offset, formula_used=f"STRADDLE_WIDTH:{width_mult}")
+
+
+def parse_atm_straddle_premium_pct_formula(
+    spot: float,
+    strike_interval: float,
+    pct: float,
+    days_to_expiry: float,
+    volatility: float,
+    option_type: Literal["CE", "PE"] = "CE",
+    rate: float = 0.0,
+    dividend_yield: float = 0.0,
+) -> StrikeResult:
+    """Find strike where option premium = pct% of ATM straddle premium."""
+    from app.quant.options.pricing import calculate_greeks
+    atm = calculate_atm_strike(spot, strike_interval)
+    ce_prem = calculate_greeks(spot, atm, days_to_expiry, volatility, rate, dividend_yield, "CE").price
+    pe_prem = calculate_greeks(spot, atm, days_to_expiry, volatility, rate, dividend_yield, "PE").price
+    straddle_premium = ce_prem + pe_prem
+    target_premium = straddle_premium * pct / 100.0
+    search_range = 10
+    best_strike = atm
+    best_diff = float("inf")
+    for offset in range(search_range + 1):
+        for sign in [1, -1]:
+            strike = atm + sign * offset * strike_interval
+            prem = calculate_greeks(spot, strike, days_to_expiry, volatility, rate, dividend_yield, option_type).price
+            diff = abs(prem - target_premium)
+            if diff < best_diff:
+                best_diff = diff
+                best_strike = strike
+    offset = int((best_strike - atm) / strike_interval)
+    return StrikeResult(strike=best_strike, strike_offset=offset, formula_used=f"ATM_STRADDLE_PREMIUM_PCT:{pct}")

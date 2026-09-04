@@ -230,9 +230,24 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
             action=leg_data.get("action", "buy"),
             option_type=leg_data.get("option_type", "CE"),
             strike=leg_data.get("strike"),
-            strike_formula=leg_data.get("strike_formula", "ATM"),
+            strike_offset=leg_data.get("strike_offset", 0),
+            strike_formula=leg_data.get("strike_formula"),
+            strike_selection=leg_data.get("strike_selection"),
+            strike_selection_value=leg_data.get("strike_selection_value"),
+            strike_selection_value_2=leg_data.get("strike_selection_value_2"),
             lots=leg_data.get("lots", 1),
             expiry_formula=leg_data.get("expiry_formula", "THIS_WEEK"),
+            sl_mode=leg_data.get("sl_mode"),
+            sl_value=leg_data.get("sl_value"),
+            target_mode=leg_data.get("target_mode"),
+            target_value=leg_data.get("target_value"),
+            trail_mode=leg_data.get("trail_mode"),
+            trail_step=leg_data.get("trail_step"),
+            trail_by=leg_data.get("trail_by"),
+            reentry_on_sl=leg_data.get("reentry_on_sl"),
+            reentry_on_target=leg_data.get("reentry_on_target"),
+            max_reentries=leg_data.get("max_reentries", 0),
+            square_off=leg_data.get("square_off", "partial"),
         ))
 
     definition = StrategyDefinition(
@@ -264,7 +279,7 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
     )
 
     try:
-        result = run_options_backtest(definition, candle_list, cfg)
+        result = run_options_backtest(definition, candle_list, cfg.initial_capital, cfg.costs_pct)
     except OptionsBacktestError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -302,7 +317,7 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
                     end=datetime.combine(end_date, datetime.max.time()),
                 )
                 lookups.append({c.timestamp.date(): c.close for c in prem})
-            result = run_options_backtest(definition, candle_list, cfg, leg_premium_lookup=lookups)
+            result = run_options_backtest(definition, candle_list, cfg.initial_capital, cfg.costs_pct, leg_premium_lookup=lookups)
             premium_source = "real" if any(lookups) else "bs"
         except Exception as exc:  # noqa: BLE001 - missing contracts fall back to BS
             raise HTTPException(
@@ -312,21 +327,21 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
 
     leg_outs = [
         OptionsLegPnLOut(
-            leg_index=leg.leg_index,
-            action=leg.action,
-            option_type=leg.option_type,
-            strike=leg.strike,
-            expiry=leg.expiry.isoformat(),
-            lots=leg.lots,
-            entry_price=leg.entry_price,
-            entry_date=leg.entry_date.isoformat(),
-            current_price=leg.current_price,
-            current_date=leg.current_date.isoformat(),
-            days_held=leg.days_held,
-            gross_pnl=round(leg.gross_pnl, 2),
-            costs={k: round(v, 2) for k, v in leg.costs.items()},
-            net_pnl=round(leg.net_pnl, 2),
-            exit_reason=leg.exit_reason,
+            leg_index=leg["leg_index"],
+            action=leg["action"],
+            option_type=leg["option_type"],
+            strike=leg["strike"],
+            expiry=leg["exit_time"][:10] if leg.get("exit_time") else "",
+            lots=leg["lots"],
+            entry_price=leg["entry_price"],
+            entry_date=leg["entry_time"][:10] if leg.get("entry_time") else "",
+            current_price=leg["exit_price"],
+            current_date=leg["exit_time"][:10] if leg.get("exit_time") else "",
+            days_held=0,
+            gross_pnl=leg["pnl"],
+            costs={},
+            net_pnl=leg["pnl"],
+            exit_reason=leg.get("exit_reason"),
         )
         for leg in result.legs
     ]

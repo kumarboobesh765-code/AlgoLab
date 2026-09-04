@@ -209,3 +209,111 @@ class TestSummary:
             assert "leg_index" in d
             assert "entry_time" in d
             assert "exit_time" in d
+
+
+class TestStrikeSelection:
+    def test_strike_formula_atm(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_formula="ATM", lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_strike_formula_delta(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_formula="DELTA:0.20", lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_strike_selection_closest_premium(self):
+        candles = make_candles([22000, 22100, 22200, 22300])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="closest_premium", strike_selection_value=50, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_strike_selection_delta_range(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="delta_range", strike_selection_value=0.10, strike_selection_value_2=0.30, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestRangeBreakout:
+    def test_range_breakout_entry(self):
+        candles = make_candles([22000]*5 + [22050]*3 + [22100]*5)
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1)]
+        rb = {"start_time": "09:15", "end_time": "09:20", "entry_on": "high"}
+        result = run_options_backtest(_def(legs, range_breakout=rb), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestReExecuteReentry:
+    def test_reexecute_on_sl(self):
+        candles = make_candles([22000, 22100, 21800, 22200, 22300])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_offset=0, lots=1,
+                          sl_mode="pts", sl_value=30, reentry_on_sl="reexecute", max_reentries=1)]
+        overall = OverallConfig(overall_sl=5000, overall_reentry_on_sl="reexecute")
+        result = run_options_backtest(_def(legs, overall=overall), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestStrikeTypeAndSynthetic:
+    def test_strike_type_itm(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="strike_type", strike_offset=1, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_strike_type_otm(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="strike_type", strike_offset=2, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_synthetic_future(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="synthetic_future", lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestClosestDelta:
+    def test_closest_delta_search(self):
+        candles = make_candles([22000, 22100, 22200])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_selection="closest_delta", strike_selection_value=0.20, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestRangeBreakoutReentry:
+    def test_range_breakout_reentry_on_sl(self):
+        candles = make_candles([22000]*5 + [22050]*3 + [22100]*5 + [22050]*3 + [22200]*5)
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1,
+                          sl_mode="pts", sl_value=30, reentry_on_sl="range_breakout", max_reentries=1)]
+        rb = {"start_time": "09:15", "end_time": "09:20", "entry_on": "high"}
+        result = run_options_backtest(_def(legs, range_breakout=rb), candles)
+        assert result.summary["total_trades"] >= 1
+
+
+class TestOptionsBacktestEndpoint:
+    async def test_options_backtest_endpoint(self, client):
+        payload = {
+            "underlying": "NIFTY",
+            "legs": [
+                {
+                    "action": "buy",
+                    "option_type": "CE",
+                    "strike_selection": "closest_premium",
+                    "strike_selection_value": 50,
+                    "lots": 1,
+                }
+            ],
+            "initial_capital": 100000,
+            "volatility": 0.2,
+        }
+        resp = await client.post("/api/v1/options/backtest", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "summary" in data
+        assert "legs" in data
+        assert "daily_values" in data
+        assert "cost_breakdown" in data

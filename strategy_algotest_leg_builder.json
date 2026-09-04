@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "timeframe": "5m",
+  "instrument": {
+    "symbol": "NIFTY",
+    "exchange": "NSE",
+    "segment": "options"
+  },
+  "builder": "legs",
+  "strategy_type": "intraday",
+  "cash_or_futures": "cash",
+  "skip_initial_candles": 4,
+  "max_position_in_a_day": 0,
+  "reentry_time_restriction": "none",
+  "legs": [
+    {
+      "action": "buy",
+      "option_type": "CE",
+      "lots": 1,
+      "expiry_formula": "THIS_WEEK",
+      "strike_selection": "premium_ge",
+      "strike_selection_value": 50,
+      "sl_mode": "%",
+      "sl_value": 20,
+      "target_mode": "%",
+      "target_value": 50,
+      "trail_mode": "%",
+      "trail_step": 10,
+      "trail_by": 20,
+      "reentry_on_sl": null,
+      "reentry_on_target": null,
+      "max_reentries": 0,
+      "square_off": "partial",
+      "momentum_mode": "pct_up",
+      "momentum_value": 14
+    },
+    {
+      "action": "buy",
+      "option_type": "PE",
+      "lots": 1,
+      "expiry_formula": "THIS_WEEK",
+      "strike_selection": "premium_ge",
+      "strike_selection_value": 50,
+      "sl_mode": "%",
+      "sl_value": 20,
+      "target_mode": "%",
+      "target_value": 50,
+      "trail_mode": "%",
+      "trail_step": 10,
+      "trail_by": 20,
+      "reentry_on_sl": null,
+      "reentry_on_target": null,
+      "max_reentries": 0,
+      "square_off": "partial",
+      "momentum_mode": "pct_up",
+      "momentum_value": 14
+    },
+    {
+      "action": "buy",
+      "option_type": "CE",
+      "lots": 1,
+      "expiry_formula": "THIS_WEEK",
+      "strike_selection": "strike_type",
+      "strike_offset": 0,
+      "sl_mode": "%",
+      "sl_value": 15,
+      "target_mode": "%",
+      "target_value": 40,
+      "trail_mode": "%",
+      "trail_step": 15,
+      "trail_by": 20,
+      "reentry_on_sl": null,
+      "reentry_on_target": null,
+      "max_reentries": 0,
+      "square_off": "partial",
+      "momentum_mode": "pct_up",
+      "momentum_value": 160
+    },
+    {
+      "action": "buy",
+      "option_type": "PE",
+      "lots": 1,
+      "expiry_formula": "THIS_WEEK",
+      "strike_selection": "strike_type",
+      "strike_offset": 0,
+      "sl_mode": "%",
+      "sl_value": 15,
+      "target_mode": "%",
+      "target_value": 40,
+      "trail_mode": "%",
+      "trail_step": 15,
+      "trail_by": 20,
+      "reentry_on_sl": null,
+      "reentry_on_target": null,
+      "max_reentries": 0,
+      "square_off": "partial",
+      "momentum_mode": "pct_up",
+      "momentum_value": 160
+    }
+  ],
+  "entry": {
+    "logic": "ALL",
+    "conditions": [
+      {
+        "left": {"kind": "price", "price": "close"},
+        "op": "GT",
+        "right": {"kind": "constant", "value": 0}
+      }
+    ]
+  },
+  "exit": null,
+  "risk": null,
+  "position": {
+    "quantity_type": "fixed",
+    "quantity": 1,
+    "direction": "long_only"
+  },
+  "overall": {
+    "overall_sl": 1000,
+    "overall_target": 2500,
+    "lock_and_trail_at": 4000,
+    "lock_and_trail_profit": 3000,
+    "lock_and_trail_by": 500
+  },
+  "entry_momentum": {
+    "enabled": false,
+    "direction": "up",
+    "mode": "pts",
+    "value": 0
+  },
+  "time_control": {
+    "no_entry_after": "15:15",
+    "no_reentry_after": null,
+    "time_exit": "15:15"
+  },
+  "legwise": {
+    "trail_sl_to_breakeven": "none",
+    "square_off_on_leg_sl": false
+  },
+  "range_breakout": null,
+  "variables": [],
+  "indicators": []
+}

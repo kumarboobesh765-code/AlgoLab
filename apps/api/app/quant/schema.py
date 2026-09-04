@@ -109,8 +109,20 @@ class OverallConfig(BaseModel):
     lock_and_trail_at: float | None = Field(default=None, description="MTM threshold ₹")
     lock_and_trail_by: float | None = Field(default=None, description="Trail locked profit by ₹")
     # Re-entry on overall SL / Target
-    overall_reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse"] | None = None
-    overall_reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse"] | None = None
+    overall_reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse"] | None = None
+    overall_reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse"] | None = None
+
+
+class RangeBreakoutConfig(BaseModel):
+    """Range breakout entry configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_time: str = Field(default="09:15", description="HH:MM — range start")
+    end_time: str = Field(default="09:30", description="HH:MM — range end")
+    entry_on: Literal["high", "low"] = "high"
+    reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse", "range_breakout"] | None = None
+    reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse", "range_breakout"] | None = None
 
 
 class EntryMomentumConfig(BaseModel):
@@ -143,7 +155,22 @@ class OptionLeg(BaseModel):
     option_type: Literal["CE", "PE"] = "CE"
     strike: float | None = None
     strike_offset: int | None = None
-    strike_formula: str | None = None  # e.g., "ATM+200", "SPOT-5%", "DELTA:0.20"
+    strike_formula: str | None = None  # e.g., "ATM+200", "SPOT-5%", "DELTA:0.20", "PREMIUM>=50", "CLOSEST_PREMIUM:50", "DELTA_RANGE:0.10:0.30", "STRADDLE_WIDTH:2", "ATM_STRADDLE_PREMIUM_PCT:20"
+    strike_selection: Literal[
+        "strike_type",
+        "premium_ge",
+        "premium_le",
+        "premium_range",
+        "closest_premium",
+        "delta_range",
+        "straddle_width",
+        "atm_straddle_premium_pct",
+        "closest_delta",
+        "synthetic_future",
+        "pct_of_atm",
+    ] | None = None
+    strike_selection_value: float | None = None  # primary value (e.g., premium threshold, delta target)
+    strike_selection_value_2: float | None = None  # secondary value (e.g., range high, delta high)
     lots: int = Field(default=1, ge=1)
     lots_formula: str | None = None  # e.g., "DELTA_NEUTRAL", "CAPITAL_PCT:10"
     expiry: str | None = None
@@ -174,8 +201,8 @@ class OptionLeg(BaseModel):
     delta_trail: bool = False  # trail when delta moves in favor
 
     # Re-entry after SL / Target
-    reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg"] | None = None
-    reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg"] | None = None
+    reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg", "reexecute", "reexecute_reverse", "range_breakout"] | None = None
+    reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "lazy_leg", "reexecute", "reexecute_reverse", "range_breakout"] | None = None
     max_reentries: int = Field(default=0, ge=0, le=20)
 
     # Lazy leg override params (when reentry mode is "lazy_leg")
@@ -256,6 +283,7 @@ class StrategyDefinition(BaseModel):
     entry_momentum: EntryMomentumConfig | None = None
     time_control: TimeControlConfig | None = None
     legwise: LegwiseSettings | None = None
+    range_breakout: RangeBreakoutConfig | None = None
     # Strategy-level settings
     strategy_type: Literal["intraday", "intraday_same_day", "btst", "positional"] = "intraday"
     skip_initial_candles: int = Field(default=0, ge=0, le=50, description="Skip first N candles before evaluating")
