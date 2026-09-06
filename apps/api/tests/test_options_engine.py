@@ -317,3 +317,81 @@ class TestOptionsBacktestEndpoint:
         assert "legs" in data
         assert "daily_values" in data
         assert "cost_breakdown" in data
+
+
+def make_candles_days(start: datetime, closes_per_day: int, days: int) -> list[Candle]:
+    """Candles spread across multiple calendar days (for expiry gating tests)."""
+    candles = []
+    prev = 22000.0
+    seq = [22000, 22050, 22100, 22050, 22000] * 200
+    for d in range(days):
+        for k in range(closes_per_day):
+            c = seq[(d * closes_per_day + k) % len(seq)]
+            t = start + timedelta(days=d, minutes=5 * k)
+            o = prev if d or k else c
+            candles.append(Candle(
+                timestamp=t, instrument_id="NIFTY",
+                open=o, high=max(o, c), low=min(o, c), close=c, volume=1000, oi=5000,
+            ))
+            prev = c
+    return candles
+
+
+class TestDaysBeforeExpiry:
+    def test_entry_blocked_within_expiry_window(self):
+        # Candle range 2026-06-01 .. 2026-06-10, fixed expiry 2026-06-05.
+        # Every bar is <= 4 calendar days from expiry, so entry is fully blocked.
+        start = datetime(2026, 6, 1, 9, 15, tzinfo=UTC)
+        candles = make_candles_days(start, 2, 10)
+        legs = [OptionLeg(action="buy", option_type="CE", expiry_formula="2026-06-05", lots=1)]
+        control = run_options_backtest(_def(legs), candles)
+        assert control.summary["total_trades"] >= 1
+        tc = TimeControlConfig(entry_days_before_expiry=4)
+        gated = run_options_backtest(_def(legs, time_control=tc), candles)
+        assert gated.summary["total_trades"] == 0
+
+    def test_entry_allowed_far_from_expiry(self):
+        # Expiry far in the future relative to the window -> entry proceeds.
+        start = datetime(2026, 6, 1, 9, 15, tzinfo=UTC)
+        candles = make_candles_days(start, 2, 10)
+        legs = [OptionLeg(action="buy", option_type="CE", expiry_formula="2026-06-30", lots=1)]
+        tc = TimeControlConfig(entry_days_before_expiry=5)
+        result = run_options_backtest(_def(legs, time_control=tc), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_force_exit_before_expiry(self):
+        start = datetime(2026, 6, 1, 9, 15, tzinfo=UTC)
+        candles = make_candles_days(start, 2, 10)
+        legs = [OptionLeg(action="buy", option_type="CE", expiry_formula="2026-06-12", lots=1)]
+        tc = TimeControlConfig(exit_days_before_expiry=7)
+        result = run_options_backtest(_def(legs, time_control=tc), candles)
+        # dte reaches 7 on 2026-06-05, so the open position must be closed then.
+        assert any(t.exit_reason == "exit_before_expiry" for t in result.trades)
+
+
+class TestHighLow:
+    def test_highlow_high_breakout(self):
+        # Range window 09:15–09:20 captures the day high; entry on breakout later.
+        closes = [22000, 22010, 22020] + [22150, 22200, 22250]
+        candles = make_candles(closes)
+        rb = {"start_time": "09:15", "end_time": "09:20", "entry_on": "high"}
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1, highlow="high")]
+        result = run_options_backtest(_def(legs, range_breakout=rb), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_highlow_low_breakout(self):
+        closes = [22000, 22010, 22020] + [21800, 21750, 21700]
+        candles = make_candles(closes)
+        rb = {"start_time": "09:15", "end_time": "09:20", "entry_on": "low"}
+        legs = [OptionLeg(action="buy", option_type="PE", lots=1, highlow="low")]
+        result = run_options_backtest(_def(legs, range_breakout=rb), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_highlow_confirmed_only_on_breakout(self):
+        # High occurs inside the range window; later bars never exceed it -> no entry.
+        closes = [22020, 22010, 22000] * 4
+        candles = make_candles(closes)
+        rb = {"start_time": "09:15", "end_time": "09:20", "entry_on": "high"}
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1, highlow="high")]
+        result = run_options_backtest(_def(legs, range_breakout=rb), candles)
+        assert result.summary["total_trades"] == 0

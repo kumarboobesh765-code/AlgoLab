@@ -33,6 +33,7 @@ type TrailUnit = "pts" | "%";
 type ReentryMode = "" | "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | "reexecute" | "reexecute_reverse" | "range_breakout";
 type StrategyType = "intraday" | "btst" | "positional";
 type TrailingMode = "none" | "lock" | "lock_and_trail";
+type HighLowMode = "none" | "high" | "low";
 
 interface Leg {
   id: string;
@@ -62,6 +63,7 @@ interface Leg {
   momentumUnit: MomentumUnit;
   momentumValue: string;
   rangeBreakoutEnabled: boolean;
+  highlow: HighLowMode;
 }
 
 function mkLeg(action: Action, optType: OptType, offset = 0): Leg {
@@ -75,6 +77,7 @@ function mkLeg(action: Action, optType: OptType, offset = 0): Leg {
     reentryOnSl: "", reentryOnTarget: "", maxReentries: "0",
     momentumEnabled: false, momentumDir: "up", momentumUnit: "%", momentumValue: "14",
     rangeBreakoutEnabled: false,
+    highlow: "none",
   };
 }
 
@@ -266,6 +269,10 @@ export default function LegBuilderPage() {
   const [exitTime, setExitTime] = useState("15:15");
   const [noReentryAfterEnabled, setNoReentryAfterEnabled] = useState(false);
   const [noReentryAfter, setNoReentryAfter] = useState("09:35");
+  const [stopMonitoringEnabled, setStopMonitoringEnabled] = useState(false);
+  const [stopMonitoring, setStopMonitoring] = useState("15:10");
+  const [entryDaysBefore, setEntryDaysBefore] = useState("5");
+  const [exitDaysBefore, setExitDaysBefore] = useState("1");
   const [overallMomentumEnabled, setOverallMomentumEnabled] = useState(false);
   const [overallMomentumDir, setOverallMomentumDir] = useState<MomentumDir>("up");
   const [overallMomentumUnit, setOverallMomentumUnit] = useState<MomentumUnit>("pts");
@@ -286,6 +293,11 @@ export default function LegBuilderPage() {
   const [trailByValue, setTrailByValue] = useState("");
   const [backtestStart, setBacktestStart] = useState("2025-08-27");
   const [backtestEnd, setBacktestEnd] = useState("2026-08-27");
+  const [latestData, setLatestData] = useState<string | null>(null);
+  const [rangeBreakoutEnabled, setRangeBreakoutEnabled] = useState(false);
+  const [rangeStart, setRangeStart] = useState("09:15");
+  const [rangeEnd, setRangeEnd] = useState("09:30");
+  const [rangeEntryOn, setRangeEntryOn] = useState<"high" | "low">("high");
 
   const step = STRIKE_STEPS[underlying] ?? 50;
 
@@ -293,6 +305,28 @@ export default function LegBuilderPage() {
     let cancelled = false;
     api<Instrument[]>("/market/instruments")
       .then((list) => { if (!cancelled) setLotSizes(Object.fromEntries(list.map((i) => [i.symbol.toUpperCase(), i.lot_size]))); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ latest_candle_utc?: Record<string, string | null> }>("/data/status")
+      .then((d) => {
+        if (cancelled) return;
+        const vals = Object.values(d.latest_candle_utc ?? {}).filter(
+          (v): v is string => typeof v === "string"
+        );
+        if (vals.length) {
+          const latest = new Date(vals.sort().pop() as string);
+          if (!Number.isNaN(latest.getTime())) {
+            const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][latest.getMonth()];
+            const dd = String(latest.getDate()).padStart(2, "0");
+            const yy = String(latest.getFullYear()).slice(-2);
+            setLatestData(`${dd}-${mon}-${yy}`);
+          }
+        }
+      })
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -375,7 +409,6 @@ export default function LegBuilderPage() {
     timeframe: "5m",
     builder: "legs",
     instrument: { symbol: underlying, exchange: "NSE", segment: "options" as const },
-    underlying,
     strategy_type: strategyType,
     cash_or_futures: underlyingSource,
     legs: [
@@ -385,7 +418,7 @@ export default function LegBuilderPage() {
         strike_offset: l.strikeOffset,
         strike_selection_value: l.strikeValue ? Number(l.strikeValue) : undefined,
         strike_selection_value_2: l.strikeValue2 ? Number(l.strikeValue2) : undefined,
-        strike: l.strike, premium: l.premium,
+        strike: l.strike,
         expiry_formula: l.expiryType.toUpperCase(),
         ...(l.slEnabled && l.slMode && l.slValue ? { sl_mode: l.slMode, sl_value: Number(l.slValue) } : {}),
         ...(l.targetEnabled && l.targetMode && l.targetValue ? { target_mode: l.targetMode, target_value: Number(l.targetValue) } : {}),
@@ -393,13 +426,14 @@ export default function LegBuilderPage() {
         ...(l.reentryOnSl ? { reentry_on_sl: l.reentryOnSl, max_reentries: Number(l.maxReentries) } : {}),
         ...(l.reentryOnTarget ? { reentry_on_target: l.reentryOnTarget, max_reentries: Number(l.maxReentries) } : {}),
         ...(l.momentumEnabled && l.momentumValue ? { momentum_mode: `${l.momentumUnit}_${l.momentumDir}` as const, momentum_value: Number(l.momentumValue) } : {}),
+        ...(l.highlow !== "none" ? { highlow: l.highlow } : {}),
         square_off: squareOff,
       })),
       ...lazyLegs.map((l) => ({
         action: l.action, option_type: l.optType, lots: l.lots,
         strike_selection: l.strikeMode,
         strike_offset: l.strikeOffset,
-        strike: atm + l.strikeOffset * step, premium: 50,
+        strike: atm + l.strikeOffset * step,
         expiry_formula: l.expiryType.toUpperCase(),
         ...(l.slEnabled && l.slMode && l.slValue ? { sl_mode: l.slMode, sl_value: Number(l.slValue) } : {}),
         ...(l.targetEnabled && l.targetMode && l.targetValue ? { target_mode: l.targetMode, target_value: Number(l.targetValue) } : {}),
@@ -424,8 +458,18 @@ export default function LegBuilderPage() {
       lock_and_trail_by: trailingMode !== "none" && trailByValue ? Number(trailByValue) : null,
     },
     entry_momentum: overallMomentumEnabled ? { enabled: true, direction: overallMomentumDir, mode: overallMomentumUnit, value: Number(overallMomentumValue) || 0 } : null,
-    time_control: { no_entry_after: exitTime || null, no_reentry_after: noReentryAfterEnabled ? noReentryAfter : null, time_exit: exitTime || null },
+    time_control: {
+      no_entry_after: stopMonitoringEnabled ? (stopMonitoring || null) : (exitTime || null),
+      no_reentry_after: noReentryAfterEnabled ? noReentryAfter : null,
+      time_exit: exitTime || null,
+      stop_monitoring_after: stopMonitoringEnabled ? (stopMonitoring || null) : null,
+      entry_days_before_expiry: entryDaysBefore ? Number(entryDaysBefore) : null,
+      exit_days_before_expiry: exitDaysBefore ? Number(exitDaysBefore) : null,
+    },
     legwise: { trail_sl_to_breakeven: trailToBreakeven ? trailToBeScope : "none", square_off_on_leg_sl: squareOff === "complete" },
+    ...(rangeBreakoutEnabled || legs.some((l) => l.rangeBreakoutEnabled || l.highlow !== "none")
+      ? { range_breakout: { start_time: rangeStart, end_time: rangeEnd, entry_on: rangeEntryOn } }
+      : {}),
   });
 
   const doSave = async (): Promise<string> => {
@@ -453,7 +497,7 @@ export default function LegBuilderPage() {
       const id = await doSave();
       const r = await api<BacktestRun>("/backtests", {
         method: "POST",
-        body: JSON.stringify({ strategy_id: id, initial_capital: 100000, costs_pct: 0.05 }),
+        body: JSON.stringify({ strategy_id: id, start: backtestStart || null, end: backtestEnd || null, initial_capital: 100000, costs_pct: 0.05 }),
       });
       setRun(r);
       setMessage(`Backtest complete — return ${(r.result_summary?.summary.return_pct ?? 0).toFixed(2)}%.`);
@@ -537,6 +581,26 @@ export default function LegBuilderPage() {
                 <input type="time" value={noReentryAfter} onChange={(e) => setNoReentryAfter(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
               )}
             </div>
+            <label className="block text-xs font-medium text-slate-500">
+              Entry trading days before expiry
+              <input type="number" min={0} max={90} value={entryDaysBefore} onChange={(e) => setEntryDaysBefore(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+            </label>
+            <label className="block text-xs font-medium text-slate-500">
+              Exit trading days before expiry
+              <input type="number" min={0} max={90} value={exitDaysBefore} onChange={(e) => setExitDaysBefore(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+            </label>
+            <div className="block text-xs font-medium text-slate-500">
+              <div className="flex items-center gap-2">
+                Stop monitoring after
+                <button onClick={() => setStopMonitoringEnabled(!stopMonitoringEnabled)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${stopMonitoringEnabled ? "bg-blue-600" : "bg-slate-300"}`}>
+                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${stopMonitoringEnabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+                </button>
+              </div>
+              {stopMonitoringEnabled && (
+                <input type="time" value={stopMonitoring} onChange={(e) => setStopMonitoring(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
+              )}
+            </div>
             <div className="block text-xs font-medium text-slate-500">
               <div className="flex items-center gap-2">
                 Overall Momentum
@@ -568,6 +632,22 @@ export default function LegBuilderPage() {
         <Card title="Legwise settings">
           <div className="flex flex-wrap items-center gap-6">
             <div className="block text-xs font-medium text-slate-500">
+              Select segments
+              <div className="mt-1 flex gap-0 rounded-md border border-slate-300 overflow-hidden">
+                <button
+                  onClick={() => setUnderlyingSource("cash")}
+                  className={`flex-1 px-4 py-1.5 text-xs font-medium transition-colors ${underlyingSource === "cash" ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                  Options
+                </button>
+                <button
+                  onClick={() => setUnderlyingSource("futures")}
+                  className={`flex-1 px-4 py-1.5 text-xs font-medium transition-colors ${underlyingSource === "futures" ? "bg-blue-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+                  Futures
+                </button>
+              </div>
+              <span className="mt-1 block text-[10px] text-slate-400">Futures legs use a futures underlying; option legs use the cash underlying.</span>
+            </div>
+            <div className="block text-xs font-medium text-slate-500">
               Square Off
               <div className="mt-1 flex gap-0 rounded-md border border-slate-300 overflow-hidden">
                 {(["partial", "complete"] as const).map((v) => (
@@ -592,6 +672,12 @@ export default function LegBuilderPage() {
                 </div>
               )}
             </label>
+            <div className="block text-xs font-medium text-slate-500">
+              Total Lot
+              <p className="mt-1 text-base font-bold text-slate-800 tabular-nums">
+                {legs.reduce((sum, l) => sum + l.lots, 0) + lazyLegs.reduce((sum, l) => sum + l.lots, 0)}
+              </p>
+            </div>
           </div>
         </Card>
         <div />
@@ -764,6 +850,18 @@ export default function LegBuilderPage() {
                         </label>
                         {l.rangeBreakoutEnabled && (
                           <p className="text-[10px] text-slate-400">Configure in Overall Strategy Settings</p>
+                        )}
+                      </div>
+                      {/* HighLow */}
+                      <div>
+                        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">HighLow</p>
+                        <select value={l.highlow} onChange={(e) => patchLeg(l.id, { highlow: e.target.value as HighLowMode })} className="rounded border border-slate-300 px-1.5 py-1 text-[11px] text-slate-700">
+                          <option value="none">OFF</option>
+                          <option value="high">High Breakout</option>
+                          <option value="low">Low Breakout</option>
+                        </select>
+                        {l.highlow !== "none" && (
+                          <p className="mt-1 text-[10px] text-slate-400">Range window from Overall settings</p>
                         )}
                       </div>
                     </div>
@@ -977,6 +1075,33 @@ export default function LegBuilderPage() {
               </div>
             )}
           </div>
+          {/* Range Breakout */}
+          <div className="md:col-span-2 lg:col-span-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              Range Breakout
+              <button onClick={() => setRangeBreakoutEnabled(!rangeBreakoutEnabled)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${rangeBreakoutEnabled ? "bg-blue-600" : "bg-slate-300"}`}>
+                <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${rangeBreakoutEnabled ? "translate-x-4.5" : "translate-x-0.5"}`} />
+              </button>
+            </div>
+            {rangeBreakoutEnabled && (
+              <div className="mt-1 flex flex-wrap gap-2 items-center">
+                <span className="text-[10px] text-slate-400">Range start</span>
+                <input type="time" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+                <span className="text-[10px] text-slate-400">Range end</span>
+                <input type="time" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+                <span className="text-[10px] text-slate-400">Entry on</span>
+                <div className="flex gap-0 rounded-md border border-slate-300 overflow-hidden">
+                  {(["high", "low"] as const).map((v) => (
+                    <button key={v} onClick={() => setRangeEntryOn(v)}
+                      className={`px-3 py-1 text-[10px] font-medium capitalize transition-colors ${rangeEntryOn === v ? "bg-blue-600 text-white" : "bg-white text-slate-600"}`}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -992,6 +1117,9 @@ export default function LegBuilderPage() {
             <input type="date" value={backtestEnd} onChange={(e) => setBacktestEnd(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800" />
           </label>
         </div>
+        {latestData && (
+          <p className="mt-2 text-[11px] text-slate-400">Latest Backtest data is available for {latestData}</p>
+        )}
       </Card>
 
       {/* Payoff + Metrics */}

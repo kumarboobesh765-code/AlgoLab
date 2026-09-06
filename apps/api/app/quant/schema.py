@@ -144,6 +144,9 @@ class TimeControlConfig(BaseModel):
     no_entry_after: str | None = Field(default=None, description="HH:MM — no new entries after")
     no_reentry_after: str | None = Field(default=None, description="HH:MM — no re-entries after")
     time_exit: str | None = Field(default=None, description="HH:MM — force exit all at")
+    stop_monitoring_after: str | None = Field(default=None, description="HH:MM — stop monitoring/force exit all at")
+    entry_days_before_expiry: int | None = Field(default=None, ge=0, le=90, description="Block new entries within this many days before expiry")
+    exit_days_before_expiry: int | None = Field(default=None, ge=0, le=90, description="Force-close positions within this many days before expiry")
 
 
 class OptionLeg(BaseModel):
@@ -216,6 +219,10 @@ class OptionLeg(BaseModel):
 
     # Square-off behavior when this leg's SL/Target hits
     square_off: Literal["partial", "complete"] = "partial"
+
+    # HighLow — enter this leg on a range high/low breakout (uses the
+    # strategy-level range_breakout time window for the range definition)
+    highlow: Literal["none", "high", "low"] = "none"
 
 
 class OptionGreeks(BaseModel):

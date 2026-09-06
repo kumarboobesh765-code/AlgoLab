@@ -77,8 +77,27 @@ export interface OptionLeg {
   option_type: "CE" | "PE";
   strike?: number | null;
   strike_offset?: number | null;
+  strike_formula?: string | null;
+  strike_selection?:
+    | "strike_type"
+    | "premium_ge"
+    | "premium_le"
+    | "premium_range"
+    | "closest_premium"
+    | "delta_range"
+    | "straddle_width"
+    | "atm_straddle_premium_pct"
+    | "closest_delta"
+    | "synthetic_future"
+    | "pct_of_atm"
+    | null;
+  strike_selection_value?: number | null;
+  strike_selection_value_2?: number | null;
   lots?: number;
+  lots_formula?: string | null;
   expiry?: string | null;
+  expiry_formula?: string | null;
+  square_off?: "partial" | "complete";
   // Simple Momentum — entry delayed until premium/underlying moves by X
   momentum_mode?:
     | "none"
@@ -99,8 +118,8 @@ export interface OptionLeg {
   trail_by?: number | null;
   delta_trail?: boolean;
   // Re-entry
-  reentry_on_sl?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | null;
-  reentry_on_target?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | null;
+  reentry_on_sl?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | "reexecute" | "reexecute_reverse" | "range_breakout" | null;
+  reentry_on_target?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | "momentum" | "momentum_reverse" | "lazy_leg" | "reexecute" | "reexecute_reverse" | "range_breakout" | null;
   max_reentries?: number;
   // Lazy leg overrides
   lazy_sl_mode?: "pts" | "%" | null;
@@ -110,8 +129,6 @@ export interface OptionLeg {
   lazy_action?: "buy" | "sell" | null;
   lazy_option_type?: "CE" | "PE" | null;
   lazy_strike_offset?: number | null;
-  // Square-off behavior
-  square_off?: "partial" | "complete";
 }
 
 export interface LegwiseSettings {

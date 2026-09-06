@@ -172,6 +172,37 @@ def run_options_backtest(
     time_cfg = definition.time_control
     legwise = definition.legwise
 
+    # Resolve each leg's expiry date from its expiry_formula (calendar-based,
+    # used for "N days before expiry" entry/exit gates).
+    try:
+        from app.quant.options.expiry import parse_expiry_formula
+    except Exception:  # pragma: no cover - guard
+        parse_expiry_formula = None
+
+    def _leg_expiry(li: int, ref_date) -> object | None:
+        if parse_expiry_formula is None:
+            return None
+        formula = (legs[li].expiry_formula or "").strip()
+        if not formula:
+            if legs[li].expiry:
+                try:
+                    from datetime import date as _date
+                    return _date.fromisoformat(legs[li].expiry)
+                except Exception:
+                    return None
+            return None
+        try:
+            return parse_expiry_formula(formula, ref_date)
+        except Exception:
+            return None
+
+    def _leg_days_to_expiry(li: int, ref_date) -> float | None:
+        expiry = _leg_expiry(li, ref_date)
+        if expiry is None:
+            return None
+        delta = (expiry - ref_date).days
+        return max(float(delta), 0.0)
+
     cash = initial_capital
     positions: list[LegPosition | None] = [None] * len(legs)
     pending_entries: list[bool] = [True] * len(legs)
@@ -411,13 +442,32 @@ def run_options_backtest(
         no_entry = _parse_time_hm(time_cfg.no_entry_after) if time_cfg else None
         no_reentry = _parse_time_hm(time_cfg.no_reentry_after) if time_cfg else None
         force_exit = _parse_time_hm(time_cfg.time_exit) if time_cfg else None
+        stop_monitor = _parse_time_hm(time_cfg.stop_monitoring_after) if time_cfg else None
+        entry_dbe = time_cfg.entry_days_before_expiry if time_cfg else None
+        exit_dbe = time_cfg.exit_days_before_expiry if time_cfg else None
 
-        if force_exit and bar_min >= force_exit:
+        bar_date = bar.timestamp.date() if hasattr(bar.timestamp, "date") else None
+
+        # Force-exit on time_exit OR stop_monitoring_after
+        forced_exit_time = force_exit
+        if stop_monitor is not None and (forced_exit_time is None or stop_monitor > forced_exit_time):
+            forced_exit_time = stop_monitor
+        if forced_exit_time and bar_min >= forced_exit_time:
             for li in range(len(legs)):
                 if positions[li] is not None and not positions[li].momentum_pending:
                     _close_leg(li, bar, "time_exit")
             equity_curve.append({"time": bar.timestamp.isoformat(), "equity": round(cash, 2)})
             continue
+
+        # Force-exit open positions when the configured days-before-expiry is reached
+        if exit_dbe is not None and bar_date is not None:
+            for li in range(len(legs)):
+                pos = positions[li]
+                if pos is not None and not pos.momentum_pending:
+                    dte = _leg_days_to_expiry(li, bar_date)
+                    if dte is not None and dte <= exit_dbe:
+                        _close_leg(li, bar, "exit_before_expiry")
+                        pending_entries[li] = False
 
         for li in range(len(legs)):
             pos = positions[li]
@@ -472,6 +522,21 @@ def run_options_backtest(
                 if max_daily > 0 and daily_entry_count >= max_daily:
                     pending_entries[li] = False
                     continue
+                # Block entry within the configured days-before-expiry window
+                if entry_dbe is not None and bar_date is not None:
+                    dte = _leg_days_to_expiry(li, bar_date)
+                    if dte is not None and dte <= entry_dbe:
+                        pending_entries[li] = False
+                        continue
+                # Per-leg HighLow — wait for range breakout in the chosen direction
+                hl_mode = legs[li].highlow or "none"
+                if hl_mode != "none":
+                    if not rb_captured or rb_high is None or rb_low is None:
+                        continue
+                    if hl_mode == "high" and not (S > rb_high):
+                        continue
+                    if hl_mode == "low" and not (S < rb_low):
+                        continue
                 use_rb = rb_cfg and rb_captured and not rb_entered
                 if use_rb and rb_reentry[li]:
                     if rb_cfg and rb_captured and not rb_entered:
