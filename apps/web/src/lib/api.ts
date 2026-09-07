@@ -939,6 +939,29 @@ export interface TickOut {
   change_pct: number;
 }
 
+export interface PaperAccountOut {
+  id: string;
+  name: string;
+  initial_capital: number;
+  equity: number;
+  unrealized_pnl: number;
+  created_at: string;
+}
+
+export interface ForwardTestCreate {
+  strategy_id: string;
+  account_id: string;
+}
+
+export interface ForwardTestOut {
+  id: string;
+  strategy_id: string;
+  account_id: string;
+  status: "pending" | "running" | "paused" | "stopped" | "completed";
+  created_at: string;
+  finished_at?: string;
+}
+
 export interface DeployRequest {
   strategy_id: string;
   broker: string;

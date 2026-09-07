@@ -8,6 +8,45 @@ import {
   type ProductStatus,
 } from "@/lib/productNav";
 
+const SAMPLE_STRATEGIES = [
+  {
+    name: "ATM Straddle",
+    tag: "S",
+    desc: "Buy ATM call + ATM put at start, square off at end of day. Pure vega play.",
+    href: "/builder/ai",
+  },
+  {
+    name: "OTM Strangle",
+    tag: "G",
+    desc: "Buy OTM call + OTM put (500 pts from ATM). Lower premium, wider breakeven.",
+    href: "/builder/ai",
+  },
+  {
+    name: "Iron Condor",
+    tag: "IC",
+    desc: "Sell OTM call spread + sell OTM put spread. Range-bound strategy.",
+    href: "/builder/ai",
+  },
+  {
+    name: "Bull Call Spread",
+    tag: "BC",
+    desc: "Buy ATM call, sell OTM call. Limited risk, limited reward on upside.",
+    href: "/builder/ai",
+  },
+  {
+    name: "Bear Put Spread",
+    tag: "BP",
+    desc: "Buy ATM put, sell OTM put. Profit when price falls below breakeven.",
+    href: "/builder/ai",
+  },
+  {
+    name: "Short Straddle",
+    tag: "SS",
+    desc: "Sell ATM call + ATM put. Collect premium, bounded risk if move is large.",
+    href: "/builder/ai",
+  },
+];
+
 function StatusPill({ status }: { status: ProductStatus }) {
   if (status === "live")
     return (
@@ -194,6 +233,45 @@ export default function WelcomePage() {
               <p className="mt-2 text-[13px] leading-relaxed text-slate-600">{p.body}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Sample strategy library */}
+      <section className="mx-auto max-w-6xl px-6 py-12">
+        <div className="mb-6 text-center">
+          <h2 className="text-2xl font-bold text-slate-900">Sample strategies</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            One-click presets inside the platform — backtest any of these in 30 seconds.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {SAMPLE_STRATEGIES.map((s) => (
+            <Link
+              key={s.name}
+              href="/builder/ai"
+              className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 transition-all hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-sm"
+            >
+              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-violet-600 text-xs font-bold text-white">
+                {s.tag}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-semibold text-slate-900 group-hover:text-blue-700">
+                  {s.name}
+                </span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                  {s.desc}
+                </span>
+              </span>
+            </Link>
+          ))}
+        </div>
+        <div className="mt-5 text-center">
+          <Link
+            href="/builder/ai"
+            className="text-sm font-medium text-blue-600 hover:underline"
+          >
+            Open Signals AI to try them all →
+          </Link>
         </div>
       </section>
 

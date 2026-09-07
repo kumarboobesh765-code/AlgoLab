@@ -5,12 +5,17 @@ import {
   api,
   type BacktestResults,
   type BacktestRun,
+  type DeployOut,
+  type ForwardTestOut,
+  type PaperAccountOut,
   type Strategy,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { downloadCsv } from "@/lib/csv";
 import { useAppSettings } from "@/lib/settings";
+import { DeployModal } from "@/components/backtest/DeployModal";
+import { StartPaperTradeModal } from "@/components/backtest/StartPaperTradeModal";
 
 function todayISO(offsetDays = 0): string {
   const d = new Date();
@@ -110,6 +115,10 @@ export default function BacktestPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [run, setRun] = useState<BacktestRun | null>(null);
   const [history, setHistory] = useState<BacktestRun[]>([]);
+  const [showDeployModal, setShowDeployModal] = useState<"paper" | "live" | null>(null);
+  const [showPaperTradeModal, setShowPaperTradeModal] = useState(false);
+  const [deployResult, setDeployResult] = useState<DeployOut | null>(null);
+  const [paperTradeResult, setPaperTradeResult] = useState<{ run: ForwardTestOut; account: PaperAccountOut } | null>(null);
 
   const refreshHistory = useCallback(() => {
     api<BacktestRun[]>("/backtests")
@@ -285,7 +294,31 @@ export default function BacktestPage() {
               : undefined
           }
           actions={
-            <Badge tone={run.status === "completed" ? "green" : "red"}>{run.status}</Badge>
+            <span className="flex items-center gap-2">
+              <Badge tone={run.status === "completed" ? "green" : "red"}>{run.status}</Badge>
+              {run.status === "completed" && selected && (
+                <>
+                  <button
+                    onClick={() => setShowPaperTradeModal(true)}
+                    className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Paper trade
+                  </button>
+                  <button
+                    onClick={() => setShowDeployModal("paper")}
+                    className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:bg-slate-100"
+                  >
+                    Deploy paper
+                  </button>
+                  <button
+                    onClick={() => setShowDeployModal("live")}
+                    className="rounded bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-blue-700"
+                  >
+                    Deploy live
+                  </button>
+                </>
+              )}
+            </span>
           }
         >
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -319,6 +352,80 @@ export default function BacktestPage() {
             )}
             <MetricCard label="Largest loss" value={fmtMoney(s.largest_loss)} tone="red" />
           </div>
+
+          {selected && (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Take this strategy live
+              </h3>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {deployResult ? (
+                  <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    <svg className="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>
+                      Deployed as{" "}
+                      <strong>{deployResult.algo_id}</strong> on {deployResult.broker} ({deployResult.mode})
+                    </span>
+                    <a
+                      href="/tools/execution"
+                      className="ml-1 font-medium underline hover:no-underline"
+                    >
+                      View →
+                    </a>
+                  </div>
+                ) : paperTradeResult ? (
+                  <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    <svg className="h-4 w-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>
+                      Paper trade started on{" "}
+                      <strong>{paperTradeResult.account.name}</strong> (₹
+                      {Math.round(paperTradeResult.account.equity).toLocaleString("en-IN")} equity)
+                    </span>
+                    <a
+                      href="/forward-test"
+                      className="ml-1 font-medium underline hover:no-underline"
+                    >
+                      Monitor →
+                    </a>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setShowPaperTradeModal(true)}
+                      className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Start paper trade
+                    </button>
+                    <button
+                      onClick={() => setShowDeployModal("paper")}
+                      className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Deploy to paper account
+                    </button>
+                    <button
+                      onClick={() => setShowDeployModal("live")}
+                      className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700"
+                    >
+                      Deploy live
+                    </button>
+                    <span className="text-[11px] text-slate-400">
+                      or{" "}
+                      <a href="/tools/execution" className="underline hover:no-underline">
+                        browse all deployments
+                      </a>
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           <h3 className="mt-4 mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
             <span>Equity curve</span>
@@ -477,6 +584,29 @@ export default function BacktestPage() {
           </ul>
         )}
       </Card>
+
+      {selected && showDeployModal && (
+        <DeployModal
+          strategy={selected}
+          mode={showDeployModal}
+          onClose={() => setShowDeployModal(null)}
+          onDeployed={(d) => {
+            setDeployResult(d);
+            setShowDeployModal(null);
+          }}
+        />
+      )}
+
+      {selected && showPaperTradeModal && (
+        <StartPaperTradeModal
+          strategy={selected}
+          onClose={() => setShowPaperTradeModal(false)}
+          onStarted={(run, account) => {
+            setPaperTradeResult({ run, account });
+            setShowPaperTradeModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

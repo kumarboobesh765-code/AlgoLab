@@ -38,9 +38,9 @@ export const PRODUCT_CATEGORIES: ProductCategory[] = [
       {
         label: "Algo Trade",
         href: "/tools/execution",
-        status: "soon",
+        status: "live",
         icon: "rocket",
-        description: "Deploy algo strategies with one click across 7 brokers",
+        description: "One-click deploy to 7 brokers — paper or live",
       },
       {
         label: "Forward Test",

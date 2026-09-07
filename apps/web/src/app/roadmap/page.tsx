@@ -9,9 +9,9 @@ const MILESTONES = [
   {
     id: "B",
     title: "One-click deploy + Signals AI",
-    status: "next" as const,
+    status: "shipped" as const,
     blurb:
-      "One-click 'Deploy to live' button on every backtest result. Signals AI page combines NL prompt + auto-backtest + suggested legs. Public sample-strategy library on the landing page.",
+      "One-click 'Deploy to live' or 'Start paper trade' on every backtest result. Signals AI page combines NL prompt + auto-backtest + 6 instant options presets (ATM Straddle, OTM Strangle, Short Straddle, Iron Condor, Bull Call Spread, Bear Put Spread). Public sample-strategy library on the landing.",
   },
   {
     id: "C",
