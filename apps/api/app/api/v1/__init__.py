@@ -17,9 +17,11 @@ from app.api.v1 import (
     paper,
     portfolio,
     quant,
+    reports,
     strategies,
     strategies_polish,
     tax,
+    webhooks,
 )
 
 api_router = APIRouter()
@@ -42,3 +44,5 @@ api_router.include_router(calendar.router)
 api_router.include_router(tax.router)
 api_router.include_router(portfolio.router)
 api_router.include_router(automation.router)
+api_router.include_router(reports.router)
+api_router.include_router(webhooks.router)
