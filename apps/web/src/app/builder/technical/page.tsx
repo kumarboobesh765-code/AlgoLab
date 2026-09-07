@@ -233,7 +233,7 @@ export default function TechnicalBuilderPage() {
   const [symbol, setSymbol] = useState("NIFTY");
   const [exchange, setExchange] = useState("NSE");
   const [underlyingSource, setUnderlyingSource] = useState<"cash" | "futures">("cash");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
   const [candleName, setCandleName] = useState("Current");
   const [candleInterval, setCandleInterval] = useState<typeof TIMEFRAMES[number]>(savedTimeframe as typeof TIMEFRAMES[number]);
   const [candleFields, setCandleFields] = useState("Equity");
@@ -394,7 +394,6 @@ export default function TechnicalBuilderPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, hasLegs]);
 
   const indicatorContext = useMemo(() => {
@@ -500,12 +499,13 @@ export default function TechnicalBuilderPage() {
         time_exit: tradeTo || null,
       },
       legwise: {
-        trail_sl_to_breakeven: legs.some((l) => l.moveToCost) ? ("all_legs" as const) : ("none" as const),
+        trail_sl_to_breakeven: "none",
         square_off_on_leg_sl: false,
+        move_to_cost: legs.some((l) => l.moveToCost),
       },
     };
   }, [
-    segment, legs, txSlPts, txSlPct, txTpPts, txTpPct, featReentry, featReexecute,
+    segment, legs, hasLegs, txSlPts, txSlPct, txTpPts, txTpPct, featReentry, featReexecute,
     dailySl, dailyTp, candleInterval, symbol, exchange, indicators, cases, tradeType,
     maxTxns, underlyingSource, tradeFrom, tradeTo, featTrailing, trailingPct,
   ]);

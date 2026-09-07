@@ -42,6 +42,11 @@ def test_definition_loads():
     assert definition.overall.lock_and_trail_at == 4000
     assert definition.overall.lock_and_trail_profit == 3000
     assert definition.overall.lock_and_trail_by == 500
+    assert definition.overall.daily_sl == 5000
+    assert definition.overall.daily_target == 20000
+    assert definition.overall.spike_protection_candles == 2
+    assert definition.legwise is not None
+    assert definition.legwise.move_to_cost is True
 
 
 def test_backtest_runs():

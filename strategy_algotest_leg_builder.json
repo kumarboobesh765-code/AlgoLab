@@ -120,7 +120,10 @@
     "overall_target": 2500,
     "lock_and_trail_at": 4000,
     "lock_and_trail_profit": 3000,
-    "lock_and_trail_by": 500
+    "lock_and_trail_by": 500,
+    "daily_sl": 5000,
+    "daily_target": 20000,
+    "spike_protection_candles": 2
   },
   "entry_momentum": {
     "enabled": false,
@@ -135,7 +138,8 @@
   },
   "legwise": {
     "trail_sl_to_breakeven": "none",
-    "square_off_on_leg_sl": false
+    "square_off_on_leg_sl": false,
+    "move_to_cost": true
   },
   "range_breakout": null,
   "variables": [],

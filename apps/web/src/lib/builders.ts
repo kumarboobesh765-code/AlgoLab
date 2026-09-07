@@ -134,6 +134,7 @@ export interface OptionLeg {
 export interface LegwiseSettings {
   trail_sl_to_breakeven: "none" | "sl_legs" | "all_legs";
   square_off_on_leg_sl: boolean;
+  move_to_cost?: boolean;
 }
 
 export interface OverallConfig {
@@ -148,6 +149,9 @@ export interface OverallConfig {
   lock_and_trail_by: number | null;
   overall_reentry_on_sl?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | null;
   overall_reentry_on_target?: "asap" | "asap_reverse" | "cost" | "cost_reverse" | null;
+  daily_sl?: number | null;
+  daily_target?: number | null;
+  spike_protection_candles?: number;
 }
 
 export interface EntryMomentumConfig {

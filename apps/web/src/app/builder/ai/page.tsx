@@ -185,13 +185,6 @@ export default function AIBuilderPage() {
             >
               Open in Technical Builder
             </button>
-            <button
-              onClick={() => openInBuilder("/builder/visual")}
-              disabled={!draft.valid}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Open in Visual Builder
-            </button>
             {savedStrategy && (
               <span className="flex items-center gap-2 text-xs text-slate-600">
                 Saved as <strong>{savedStrategy.name}</strong>

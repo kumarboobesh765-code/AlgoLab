@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
@@ -111,16 +110,22 @@ interface LazyLeg {
   momentumValue: string;
 }
 
+function isoDaysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
 function mkLazyLeg(name: string): LazyLeg {
   return {
     id: `ll_${Math.random().toString(36).slice(2, 8)}`,
     name, action: "buy", lots: 1, optType: "CE", expiryType: "weekly",
     strikeMode: "strike_type", strikeOffset: 0, strikeValue: "", strikeValue2: "",
-    targetEnabled: true, targetMode: "%", targetValue: "40",
-    slEnabled: true, slMode: "%", slValue: "15",
-    trailEnabled: true, trailUnit: "%", trailTrigger: "20", trailBy: "15",
+    targetEnabled: false, targetMode: "%", targetValue: "40",
+    slEnabled: false, slMode: "%", slValue: "15",
+    trailEnabled: false, trailUnit: "%", trailTrigger: "20", trailBy: "15",
     reentryOnSl: "", reentryOnTarget: "", maxReentries: "0",
-    momentumEnabled: true, momentumDir: "up", momentumUnit: "%", momentumValue: "160",
+    momentumEnabled: false, momentumDir: "up", momentumUnit: "%", momentumValue: "160",
   };
 }
 
@@ -259,8 +264,8 @@ export default function LegBuilderPage() {
   const [run, setRun] = useState<BacktestRun | null>(null);
   const [saved, setSaved] = useState<Strategy[]>([]);
   const [lotSizes, setLotSizes] = useState<Record<string, number>>({});
-  const [expandedLeg, setExpandedLeg] = useState<string | null>(null);
-  const [expandedLazy, setExpandedLazy] = useState<string | null>(null);
+  const [collapsedLegs, setCollapsedLegs] = useState<Set<string>>(new Set());
+  const [collapsedLazy, setCollapsedLazy] = useState<Set<string>>(new Set());
 
   const [segment, setSegment] = useState<"weekly_monthly" | "stocks" | "crypto">("weekly_monthly");
   const [underlyingSource, setUnderlyingSource] = useState<"cash" | "futures">("cash");
@@ -291,13 +296,17 @@ export default function LegBuilderPage() {
   const [lockProfitValue, setLockProfitValue] = useState("");
   const [trailEveryIncrease, setTrailEveryIncrease] = useState("");
   const [trailByValue, setTrailByValue] = useState("");
-  const [backtestStart, setBacktestStart] = useState("2025-08-27");
-  const [backtestEnd, setBacktestEnd] = useState("2026-08-27");
+  const [backtestStart, setBacktestStart] = useState(() => isoDaysAgo(30));
+  const [backtestEnd, setBacktestEnd] = useState(() => isoDaysAgo(0));
   const [latestData, setLatestData] = useState<string | null>(null);
   const [rangeBreakoutEnabled, setRangeBreakoutEnabled] = useState(false);
   const [rangeStart, setRangeStart] = useState("09:15");
   const [rangeEnd, setRangeEnd] = useState("09:30");
   const [rangeEntryOn, setRangeEntryOn] = useState<"high" | "low">("high");
+  const [dailySl, setDailySl] = useState("");
+  const [dailyTarget, setDailyTarget] = useState("");
+  const [spikeCandles, setSpikeCandles] = useState("0");
+  const [moveToCost, setMoveToCost] = useState(false);
 
   const step = STRIKE_STEPS[underlying] ?? 50;
 
@@ -456,6 +465,10 @@ export default function LegBuilderPage() {
       lock_and_trail_at: trailingMode !== "none" && lockProfitReach ? Number(lockProfitReach) : null,
       lock_and_trail_profit: trailingMode !== "none" && lockProfitValue ? Number(lockProfitValue) : null,
       lock_and_trail_by: trailingMode !== "none" && trailByValue ? Number(trailByValue) : null,
+      overall_trail_every: trailingMode === "lock_and_trail" && trailEveryIncrease ? Number(trailEveryIncrease) : null,
+      daily_sl: dailySl ? Number(dailySl) : null,
+      daily_target: dailyTarget ? Number(dailyTarget) : null,
+      spike_protection_candles: Number(spikeCandles) || 0,
     },
     entry_momentum: overallMomentumEnabled ? { enabled: true, direction: overallMomentumDir, mode: overallMomentumUnit, value: Number(overallMomentumValue) || 0 } : null,
     time_control: {
@@ -466,7 +479,7 @@ export default function LegBuilderPage() {
       entry_days_before_expiry: entryDaysBefore ? Number(entryDaysBefore) : null,
       exit_days_before_expiry: exitDaysBefore ? Number(exitDaysBefore) : null,
     },
-    legwise: { trail_sl_to_breakeven: trailToBreakeven ? trailToBeScope : "none", square_off_on_leg_sl: squareOff === "complete" },
+    legwise: { trail_sl_to_breakeven: trailToBreakeven ? trailToBeScope : "none", square_off_on_leg_sl: squareOff === "complete", move_to_cost: moveToCost },
     ...(rangeBreakoutEnabled || legs.some((l) => l.rangeBreakoutEnabled || l.highlow !== "none")
       ? { range_breakout: { start_time: rangeStart, end_time: rangeEnd, entry_on: rangeEntryOn } }
       : {}),
@@ -734,12 +747,12 @@ export default function LegBuilderPage() {
                   <span className="text-[10px] text-slate-400 tabular-nums">Δ: {r ? fmt(r.delta, 3) : "—"}</span>
                   <div className="ml-auto flex items-center gap-1">
                     {(l.slEnabled || l.targetEnabled || l.momentumEnabled) && <span className="text-[10px] text-blue-500">●</span>}
-                    <button onClick={() => setExpandedLeg(expandedLeg === l.id ? null : l.id)} className="text-[11px] text-blue-600 hover:underline">{expandedLeg === l.id ? "Collapse" : "Expand"}</button>
+                    <button onClick={() => setCollapsedLegs((prev) => { const n = new Set(prev); if (n.has(l.id)) { n.delete(l.id); } else { n.add(l.id); } return n; })} className="text-[11px] text-blue-600 hover:underline">{collapsedLegs.has(l.id) ? "Expand" : "Collapse"}</button>
                     <button onClick={() => removeLeg(l.id)} disabled={legs.length <= 1} className="text-[11px] text-red-500 hover:underline disabled:opacity-30">Remove</button>
                   </div>
                 </div>
                 {/* Expanded settings */}
-                {expandedLeg === l.id && (
+                {!collapsedLegs.has(l.id) && (
                   <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3">
                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                       {/* Target Profit */}
@@ -842,7 +855,40 @@ export default function LegBuilderPage() {
                           </div>
                         )}
                       </div>
-                      {/* Range Breakout */}
+          {/* Daily Limits (kill switch / freeze) */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Daily Stop Loss (₹)</label>
+            <div className="flex gap-1 items-center">
+              <span className="text-[10px] text-slate-400">Max loss</span>
+              <input type="number" value={dailySl} onChange={(e) => setDailySl(e.target.value)} placeholder="e.g. 5000" className="w-28 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">Halt new entries for the day once daily realized loss is hit.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Daily Target (₹)</label>
+            <div className="flex gap-1 items-center">
+              <span className="text-[10px] text-slate-400">Max profit</span>
+              <input type="number" value={dailyTarget} onChange={(e) => setDailyTarget(e.target.value)} placeholder="e.g. 10000" className="w-28 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">Freeze new entries for the day once daily realized profit is hit.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">Spike Protection</label>
+            <div className="flex gap-1 items-center">
+              <span className="text-[10px] text-slate-400">Skip SL for</span>
+              <input type="number" min={0} max={10} value={spikeCandles} onChange={(e) => setSpikeCandles(e.target.value)} className="w-14 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+              <span className="text-[10px] text-slate-400">candles after entry</span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-slate-400">Ignores SL on sudden premium spikes for N candles.</p>
+          </div>
+          <div className="md:col-span-2 lg:col-span-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              <input type="checkbox" checked={moveToCost} onChange={(e) => setMoveToCost(e.target.checked)} className="rounded border-slate-300" />
+              Move-to-Cost
+            </label>
+            <p className="mt-0.5 text-[10px] text-slate-400">When one leg stops out, move the surviving legs to breakeven (SL set to their entry price).</p>
+          </div>
+          {/* Range Breakout */}
                       <div>
                         <label className="flex items-center gap-2 mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
                           <input type="checkbox" checked={l.rangeBreakoutEnabled} onChange={(e) => patchLeg(l.id, { rangeBreakoutEnabled: e.target.checked })} className="rounded border-slate-300" />
@@ -908,11 +954,11 @@ export default function LegBuilderPage() {
                   <input type="number" step="0.01" value={l.strikeValue} onChange={(e) => patchLazy(l.id, { strikeValue: e.target.value })} placeholder="Value" className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
                 )}
                 <div className="ml-auto flex items-center gap-1">
-                  <button onClick={() => setExpandedLazy(expandedLazy === l.id ? null : l.id)} className="text-[11px] text-blue-600 hover:underline">{expandedLazy === l.id ? "Collapse" : "Expand"}</button>
+                  <button onClick={() => setCollapsedLazy((prev) => { const n = new Set(prev); if (n.has(l.id)) { n.delete(l.id); } else { n.add(l.id); } return n; })} className="text-[11px] text-blue-600 hover:underline">{collapsedLazy.has(l.id) ? "Expand" : "Collapse"}</button>
                   <button onClick={() => removeLazy(l.id)} className="text-[11px] text-red-500 hover:underline">Remove</button>
                 </div>
               </div>
-              {expandedLazy === l.id && (
+              {!collapsedLazy.has(l.id) && (
                 <div className="border-t border-slate-100 bg-slate-50/50 px-4 py-3">
                   <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                     <div>

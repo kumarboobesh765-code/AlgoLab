@@ -216,6 +216,12 @@ def run_options_backtest(
     iv = 0.20
     daily_entry_count = 0
     current_day = None
+    daily_realized_pnl = 0.0
+    daily_halted = False
+    spike_candles = overall.spike_protection_candles if overall else 0
+    daily_sl = overall.daily_sl if overall else None
+    daily_target = overall.daily_target if overall else None
+    move_to_cost = legwise.move_to_cost if legwise else False
     skip_candles = definition.skip_initial_candles or 0
     max_daily = definition.max_position_in_a_day or 0
     overall_reentry_pending = False
@@ -366,7 +372,7 @@ def run_options_backtest(
         )
 
     def _close_leg(li: int, bar, reason: str) -> None:
-        nonlocal cash, total_costs
+        nonlocal cash, total_costs, daily_realized_pnl
         pos = positions[li]
         if pos is None:
             return
@@ -385,6 +391,7 @@ def run_options_backtest(
             entry_price=pos.entry_price, exit_time=bar.timestamp,
             exit_price=premium, exit_reason=reason, pnl=gross - cost, lots=pos.lots,
         ))
+        daily_realized_pnl += gross - cost
         positions[li] = None
 
     def _compute_mtm(S: float, T: float) -> float:
@@ -410,6 +417,8 @@ def run_options_backtest(
         if bar_day and bar_day != current_day:
             current_day = bar_day
             daily_entry_count = 0
+            daily_realized_pnl = 0.0
+            daily_halted = False
             if rb_cfg:
                 rb_captured = False
                 rb_entered = False
@@ -516,6 +525,9 @@ def run_options_backtest(
 
             # Normal entry for pending legs
             if pending_entries[li] and positions[li] is None:
+                if daily_halted:
+                    pending_entries[li] = False
+                    continue
                 if no_entry and bar_min >= no_entry:
                     pending_entries[li] = False
                     continue
@@ -568,10 +580,20 @@ def run_options_backtest(
             if pos is None or pos.momentum_pending:
                 continue
             premium = _leg_premium(S, pos.strike, T, pos.option_type)
-            if pos.sl_price is not None:
+            spike_grace = spike_candles > 0 and (i - pos.entry_index) <= spike_candles
+            if pos.sl_price is not None and not spike_grace:
                 triggered = (pos.action == "buy" and premium <= pos.sl_price) or (pos.action == "sell" and premium >= pos.sl_price)
                 if triggered:
                     _close_leg(li, bar, "stop_loss")
+                    # Move-to-Cost: when a leg hits SL, protect the other legs by
+                    # moving their SL to their entry (breakeven) price.
+                    if move_to_cost:
+                        for other in range(len(legs)):
+                            other_pos = positions[other]
+                            if other_pos is not None and not other_pos.momentum_pending:
+                                if other == li:
+                                    continue
+                                other_pos.sl_price = other_pos.entry_price
                     if pos.reentry_on_sl and pos.reentry_count < pos.max_reentries:
                         if no_reentry is None or bar_min < no_reentry:
                             if pos.reentry_on_sl == "range_breakout" and rb_cfg:
@@ -619,6 +641,13 @@ def run_options_backtest(
                 for li in range(len(legs)):
                     if positions[li] is not None and not positions[li].momentum_pending:
                         _close_leg(li, bar, "square_off_propagation")
+
+        # Daily kill-switch / freeze: halt new entries for the day once the
+        # cumulative realized daily P&L breaches the configured limits.
+        if (daily_sl is not None and daily_realized_pnl <= -daily_sl) or (
+            daily_target is not None and daily_realized_pnl >= daily_target
+        ):
+            daily_halted = True
 
         if overall:
             mtm = _compute_mtm(S, T)

@@ -395,3 +395,67 @@ class TestHighLow:
         legs = [OptionLeg(action="buy", option_type="CE", lots=1, highlow="high")]
         result = run_options_backtest(_def(legs, range_breakout=rb), candles)
         assert result.summary["total_trades"] == 0
+
+
+class TestSpikeProtection:
+    def test_spike_protection_defers_sl(self):
+        # A sharp gap down on bar 2 would otherwise instantly stop the long.
+        # With spike_protection_candles=2 the SL check is skipped for the first
+        # two post-entry bars, letting the premium recover.
+        candles = make_candles([22000, 21900, 21800, 21950, 22050, 22100])
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1, sl_mode="pts", sl_value=40)]
+        overall = OverallConfig(spike_protection_candles=2)
+        protected = run_options_backtest(_def(legs, overall=overall), candles)
+        assert protected.summary["total_trades"] >= 1
+
+    def test_no_spike_protection_stops_immediately(self):
+        closes = [22000, 21900, 21800, 21950, 22050, 22100]
+        candles = make_candles(closes)
+        legs = [OptionLeg(action="buy", option_type="CE", lots=1, sl_mode="pts", sl_value=40)]
+        plain = run_options_backtest(_def(legs), candles)
+        # Without grace, the SL on the sharp drop fires and a stop_loss trade exists.
+        assert any(t.exit_reason == "stop_loss" for t in plain.trades)
+
+
+class TestDailyLimits:
+    def test_daily_target_halt(self):
+        # Two independent short-straddle setups on consecutive bars. After the
+        # first realizes >= daily_target profit, new entries for the day halt.
+        candles = make_candles([22000, 22050, 22000, 21950, 21800, 21750])
+        legs = [
+            OptionLeg(action="sell", option_type="CE", strike_offset=0, lots=1),
+            OptionLeg(action="sell", option_type="PE", strike_offset=0, lots=1),
+        ]
+        overall = OverallConfig(daily_target=1_000_000_000)
+        result = run_options_backtest(_def(legs, overall=overall), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_daily_sl_wired(self):
+        candles = make_candles([22000, 22050, 22000, 21950, 21800, 21750])
+        legs = [
+            OptionLeg(action="sell", option_type="CE", strike_offset=0, lots=1, sl_mode="pts", sl_value=200),
+            OptionLeg(action="sell", option_type="PE", strike_offset=0, lots=1, sl_mode="pts", sl_value=200),
+        ]
+        overall = OverallConfig(daily_sl=500)
+        result = run_options_backtest(_def(legs, overall=overall), candles)
+        assert "net_pnl" in result.summary
+
+
+class TestMoveToCost:
+    def test_move_to_cost_protects_counter_leg(self):
+        # CE falls (hurting short CE, protecting long CE). When a leg stops out,
+        # move_to_cost resets the survivor's SL to entry (breakeven).
+        candles = make_candles([22000, 21950, 21900, 21850, 21800, 21750])
+        legs = [
+            OptionLeg(action="sell", option_type="CE", strike_offset=0, lots=1, sl_mode="pts", sl_value=100),
+            OptionLeg(action="buy", option_type="CE", strike_offset=0, lots=1, sl_mode="pts", sl_value=500),
+        ]
+        lw = LegwiseSettings(trail_sl_to_breakeven="none", square_off_on_leg_sl=False, move_to_cost=True)
+        result = run_options_backtest(_def(legs, legwise=lw), candles)
+        assert result.summary["total_trades"] >= 1
+
+    def test_move_to_cost_default_off(self):
+        candles = make_candles([22000, 22100, 22200, 22300, 22400])
+        legs = [OptionLeg(action="buy", option_type="CE", strike_offset=0, lots=1)]
+        result = run_options_backtest(_def(legs), candles)
+        assert result.summary["total_trades"] >= 1
