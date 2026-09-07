@@ -6,18 +6,16 @@ rejected with a clear message instead of silently fetching provider data.
 """
 
 import uuid
-from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
-from app.backtest import BacktestConfig, BacktestError, run_backtest
-from app.backtest.options_engine import OptionsBacktestError, run_options_backtest
+from app.backtest import BacktestError
+from app.backtest.options_engine import OptionsBacktestError
 from app.core.deps import CurrentUser, DbSession
 from app.models import BacktestRun, Strategy
-from app.quant.schema import StrategyDefinition
 from app.schemas.backtest import BacktestRunDetail, BacktestRunOut, BacktestRunRequest
-from app.services.candles import load_candles
+from app.services.backtest_runner import execute_backtest
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
@@ -38,101 +36,27 @@ async def create_backtest(
     db: DbSession,
     current_user: CurrentUser,
 ) -> BacktestRun:
-    strategy = await _owned_strategy(db, current_user.id, payload.strategy_id)
-    if not strategy.definition:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Strategy has no definition yet — build one before backtesting",
-        )
     try:
-        definition = StrategyDefinition.model_validate(strategy.definition)
-    except Exception as exc:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, f"Stored definition is invalid: {exc}"
-        ) from exc
-
-    end_dt = payload.end or date.today(UTC)
-    start_dt = payload.start or end_dt - timedelta(days=30)
-    if start_dt >= end_dt:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "start must be before end")
-    start = datetime.combine(start_dt, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(end_dt, datetime.max.time().replace(microsecond=0), tzinfo=UTC)
-
-    candles = await load_candles(
-        db, symbol=strategy.underlying, interval=definition.timeframe, start=start, end=end
-    )
-    if len(candles) < 2:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"No stored {definition.timeframe} candles for {strategy.underlying} in range — "
-            "ingest history via Tools → Data Manager first",
+        return await execute_backtest(
+            db,
+            current_user.id,
+            payload.strategy_id,
+            payload.start,
+            payload.end,
+            payload.initial_capital,
+            payload.costs_pct,
+            payload.slippage_pct,
         )
-
-    run = BacktestRun(
-        strategy_id=strategy.id,
-        user_id=current_user.id,
-        version_number=strategy.current_version,
-        status="running",
-        config={
-            "symbol": strategy.underlying,
-            "timeframe": definition.timeframe,
-            "start": start_dt.isoformat(),
-            "end": end_dt.isoformat(),
-            "initial_capital": payload.initial_capital,
-            "costs_pct": payload.costs_pct,
-            "slippage_pct": payload.slippage_pct,
-            "bars": len(candles),
-        },
-        started_at=datetime.now(UTC),
-    )
-    db.add(run)
-    await db.commit()
-    await db.refresh(run)
-
-    try:
-        if definition.builder == "legs" and definition.legs:
-            result = run_options_backtest(
-                definition,
-                candles,
-                initial_capital=payload.initial_capital,
-                costs_pct=payload.costs_pct,
-            )
-        else:
-            result = run_backtest(
-                definition,
-                candles,
-                BacktestConfig(
-                    initial_capital=payload.initial_capital,
-                    costs_pct=payload.costs_pct,
-                    slippage_pct=payload.slippage_pct,
-                ),
-            )
     except (BacktestError, OptionsBacktestError) as exc:
-        run.status = "failed"
-        run.result_summary = {"error": str(exc)}
-        run.finished_at = datetime.now(UTC)
-        await db.commit()
-        await db.refresh(run)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:  # pragma: no cover - defensive
-        run.status = "failed"
-        run.result_summary = {"error": f"engine failure: {exc}"}
-        run.finished_at = datetime.now(UTC)
-        await db.commit()
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Backtest engine failed"
         ) from exc
-
-    run.status = "completed"
-    run.result_summary = {
-        "summary": result.summary,
-        "equity_curve": result.equity_curve,
-        "trades": [t.as_dict() for t in result.trades],
-    }
-    run.finished_at = datetime.now(UTC)
-    await db.commit()
-    await db.refresh(run)
-    return run
 
 
 @router.get("", response_model=list[BacktestRunOut])
@@ -157,6 +81,8 @@ async def get_backtest_candles(
     current_user: CurrentUser,
 ) -> list[dict]:
     """Stored candles exactly as the engine consumed them (for trade replay)."""
+    from datetime import UTC, date, datetime
+
     result = await db.execute(
         select(BacktestRun).where(
             BacktestRun.id == run_id, BacktestRun.user_id == current_user.id
@@ -175,6 +101,8 @@ async def get_backtest_candles(
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "Run has no valid candle range in config"
         ) from exc
+    from app.services.candles import load_candles
+
     candles = await load_candles(
         db,
         symbol=str(cfg["symbol"]),

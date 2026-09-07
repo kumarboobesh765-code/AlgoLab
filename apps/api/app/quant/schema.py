@@ -179,9 +179,11 @@ class OptionLeg(BaseModel):
         "closest_delta",
         "synthetic_future",
         "pct_of_atm",
+        "strike_multiplier",
     ] | None = None
     strike_selection_value: float | None = None  # primary value (e.g., premium threshold, delta target)
     strike_selection_value_2: float | None = None  # secondary value (e.g., range high, delta high)
+    strike_multiplier: int | None = None  # round requested strike to nearest multiple of N (e.g. 50, 100)
     lots: int = Field(default=1, ge=1)
     lots_formula: str | None = None  # e.g., "DELTA_NEUTRAL", "CAPITAL_PCT:10"
     expiry: str | None = None

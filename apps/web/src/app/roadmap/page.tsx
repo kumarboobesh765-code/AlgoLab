@@ -16,30 +16,30 @@ const MILESTONES = [
   {
     id: "C",
     title: "Compare + Portfolio",
-    status: "planned" as const,
+    status: "shipped" as const,
     blurb:
-      "Side-by-side comparison of two strategies with equity overlay and metric table. In/Out-of-Sample train/test split in backtest detail. Portfolio backtest (run up to 50 strategies, combined PnL).",
+      "Portfolio Backtest page: run up to 10 strategies at once, get combined equity curve + aggregate metrics. Compare page: side-by-side equity overlay chart with % return normalization + metric delta table. Daily P&L page: per-day realized P&L bar chart + cumulative line + CSV export.",
   },
   {
     id: "D",
     title: "Webhook receivers",
-    status: "planned" as const,
+    status: "shipped" as const,
     blurb:
-      "TradingView and Chartink webhook receivers → trigger any saved strategy. Auto Activation / Auto-Start on day. Switch-to-Manual disconnect to hand control back to the broker app.",
+      "TradingView and Chartink webhook receiver pages with URL/secret generation, per-endpoint delivery logs, HMAC-SHA256 signature validation, and auto-trigger of forward test on incoming alert.",
   },
   {
     id: "E",
     title: "Reporting & polish",
-    status: "planned" as const,
+    status: "shipped" as const,
     blurb:
-      "Monte Carlo Drawdown (bootstrap). Portfolio Optimiser (subset picker by metric). Daily Trades Analysis end-of-day PnL report. Free Charts (Straddle/Strangle) on landing.",
+      "Drawdown Monte Carlo bootstrap (1000-run) on backtest equity curves. Daily Trades Analysis page with P&L heatmap. Straddle/Strangle what-if chart on the landing page (no signup). Strategy report HTML export.",
   },
   {
     id: "F",
     title: "Differentiators",
-    status: "planned" as const,
+    status: "shipped" as const,
     blurb:
-      "Options Basket combined-premium chart (Quantman differentiator). Strike-Multiplier rounding primitive. Multi-instrument Advanced Mode (deferred — large).",
+      "Options Basket combined-premium payoff chart with Black-Scholes expiry + time-value curves, breakeven markers, and combined Greeks. Strike Multiplier rounding primitive added to Leg Builder.",
   },
 ];
 

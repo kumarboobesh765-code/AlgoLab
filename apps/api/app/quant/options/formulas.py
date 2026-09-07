@@ -90,6 +90,41 @@ def calculate_strike_by_offset(
     )
 
 
+def calculate_strike_by_multiplier(
+    spot: float,
+    multiplier: int,
+    option_type: Literal["CE", "PE"],
+    strike_interval: float | None = None,
+) -> StrikeResult:
+    """Calculate strike by rounding requested strike to nearest multiple of N.
+
+    Use case: NIFTY has 50-pt intervals, but a user may want wider spacing
+    (e.g., 100) to focus on round-number strikes.
+
+    Args:
+        spot: Current underlying price
+        multiplier: The N to round to (e.g., 50, 100)
+        option_type: "CE" or "PE"
+        strike_interval: Default chain strike step (for offset reporting only)
+
+    Returns:
+        StrikeResult with the rounded strike
+    """
+    if multiplier <= 0:
+        raise ValueError("multiplier must be positive")
+
+    strike = round(spot / multiplier) * multiplier
+    step = strike_interval if strike_interval and strike_interval > 0 else multiplier
+    atm = calculate_atm_strike(spot, step)
+    offset = int((strike - atm) / step) if option_type == "CE" else int((atm - strike) / step)
+
+    return StrikeResult(
+        strike=float(strike),
+        strike_offset=offset,
+        formula_used=f"MULTIPLIER:{multiplier}",
+    )
+
+
 def calculate_strike_by_percent(
     spot: float,
     strike_interval: float,
@@ -544,6 +579,10 @@ def parse_strike_formula(
         return calculate_strike_by_delta(
             spot, strike_interval, target_delta, days_to_expiry, volatility, rate, dividend_yield, option_type
         )
+
+    if formula.startswith("MULTIPLIER:"):
+        mult = int(formula[11:])
+        return calculate_strike_by_multiplier(spot, mult, option_type, strike_interval)
 
     try:
         strike = float(formula)

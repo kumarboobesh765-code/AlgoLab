@@ -382,6 +382,35 @@ export interface BacktestRunRequest {
   costs_pct?: number;
 }
 
+// ---- portfolio (Milestone C) ----
+
+export interface BacktestMini {
+  run_id: string;
+  strategy_id: string;
+  strategy_name: string;
+  status: string;
+  summary: BacktestSummary | null;
+  equity_curve: { time: string; equity: number }[];
+}
+
+export interface PortfolioBacktestOut {
+  runs: BacktestMini[];
+  combined_equity_curve: { time: string; equity: number }[];
+  combined_summary: BacktestSummary;
+  error: string | null;
+}
+
+export interface DailyPnlPoint {
+  date: string;
+  pnl: number;
+  cumulative: number;
+}
+
+export interface DailyPnlOut {
+  points: DailyPnlPoint[];
+  error: string | null;
+}
+
 // ---- paper accounts ----
 
 export interface PaperAccount {
@@ -704,6 +733,37 @@ export interface MonteCarloResponse {
   horizon_days: number;
 }
 
+// ---- Options Basket (Milestone F) ----
+
+export interface BasketLegInput {
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike: number;
+  premium: number;
+  quantity?: number;
+}
+
+export interface BasketPayoffPoint {
+  underlying: number;
+  current_value: number;
+  expiry_value: number;
+  combined_premium: number;
+}
+
+export interface BasketPayoffResponse {
+  spot: number;
+  days_to_expiry: number;
+  payoff: BasketPayoffPoint[];
+  breakeven_points: number[];
+  max_profit: number | null;
+  max_loss: number | null;
+  net_premium: number;
+  combined_delta: number;
+  combined_gamma: number;
+  combined_theta: number;
+  combined_vega: number;
+}
+
 // ---- options analytics ----
 
 export interface PCRResponse {
@@ -992,4 +1052,123 @@ export interface DeploymentOut {
   exchange: string;
   active: boolean;
   created_at: string;
+}
+
+// ---- portfolio backtest ----
+
+export interface BacktestMini {
+  strategy_id: string;
+  strategy_name: string;
+  status: string;
+  summary: BacktestSummary | null;
+  equity_curve: { time: string; equity: number }[];
+}
+
+export interface PortfolioBacktestOut {
+  combined_equity_curve: { time: string; equity: number }[];
+  strategies: BacktestMini[];
+  total_pnl: number;
+  return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  win_rate: number;
+  total_trades: number;
+  initial_capital: number;
+}
+
+export interface DailyPnlResponse {
+  daily_pnl: { date: string; pnl: number; cumulative: number }[];
+  portfolio_value: { date: string; value: number }[];
+}
+
+// ---- webhooks (Milestone D) ----
+
+export type WebhookProvider = "tradingview" | "chartink";
+
+export interface WebhookEndpointOut {
+  id: string;
+  user_id: string;
+  strategy_id: string | null;
+  provider: WebhookProvider;
+  slug: string;
+  name: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface WebhookEndpointCreatedOut extends WebhookEndpointOut {
+  secret: string;
+  webhook_url: string;
+}
+
+export interface WebhookEndpointCreate {
+  strategy_id?: string | null;
+  provider: WebhookProvider;
+  name: string;
+}
+
+export interface WebhookEndpointUpdate {
+  name?: string;
+  active?: boolean;
+  strategy_id?: string | null;
+}
+
+export interface WebhookDeliveryLog {
+  id: string;
+  endpoint_id: string;
+  received_at: string;
+  action: string | null;
+  status: "success" | "error" | "skipped";
+  response: string | null;
+}
+
+// ---- reporting ----
+
+export interface DrawdownMCResponse {
+  equity_curve: { time: string; equity: number }[];
+  drawdown_curve: { time: string; drawdown_pct: number }[];
+  peak_equity: number;
+  trough_equity: number;
+  max_drawdown_pct: number;
+  mc_runs: number;
+  mc_stats: {
+    mean_dd: number;
+    std_dd: number;
+    p5_dd: number;
+    p50_dd: number;
+    p95_dd: number;
+    worst_dd: number;
+    best_dd: number;
+    prob_recovery: number;
+  };
+}
+
+export interface DrawdownMCRequest {
+  run_id: string;
+  n_runs?: number;
+}
+
+export interface DailyPnlPoint {
+  date: string;
+  pnl: number;
+  cumulative: number;
+}
+
+export interface DailyPnlResponse {
+  points: DailyPnlPoint[];
+  total_pnl: number;
+  total_trades: number;
+  winning_days: number;
+  losing_days: number;
+}
+
+export interface PortfolioSummaryResponse {
+  total_strategies: number;
+  total_runs: number;
+  total_trades: number;
+  net_pnl: number;
+  avg_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  win_rate: number;
 }

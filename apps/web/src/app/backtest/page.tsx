@@ -16,6 +16,7 @@ import { downloadCsv } from "@/lib/csv";
 import { useAppSettings } from "@/lib/settings";
 import { DeployModal } from "@/components/backtest/DeployModal";
 import { StartPaperTradeModal } from "@/components/backtest/StartPaperTradeModal";
+import { DrawdownMC } from "@/components/reports/DrawdownMC";
 
 function todayISO(offsetDays = 0): string {
   const d = new Date();
@@ -119,6 +120,7 @@ export default function BacktestPage() {
   const [showPaperTradeModal, setShowPaperTradeModal] = useState(false);
   const [deployResult, setDeployResult] = useState<DeployOut | null>(null);
   const [paperTradeResult, setPaperTradeResult] = useState<{ run: ForwardTestOut; account: PaperAccountOut } | null>(null);
+  const [showMC, setShowMC] = useState(false);
 
   const refreshHistory = useCallback(() => {
     api<BacktestRun[]>("/backtests")
@@ -316,6 +318,12 @@ export default function BacktestPage() {
                   >
                     Deploy live
                   </button>
+                  <button
+                    onClick={() => setShowMC((v) => !v)}
+                    className="rounded border border-violet-200 bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100"
+                  >
+                    {showMC ? "Hide" : "Run"} Drawdown MC
+                  </button>
                 </>
               )}
             </span>
@@ -352,6 +360,12 @@ export default function BacktestPage() {
             )}
             <MetricCard label="Largest loss" value={fmtMoney(s.largest_loss)} tone="red" />
           </div>
+
+          {showMC && run && (
+            <div className="mt-4">
+              <DrawdownMC runId={run.id} />
+            </div>
+          )}
 
           {selected && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">

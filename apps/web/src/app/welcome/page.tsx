@@ -7,6 +7,7 @@ import {
   type ProductItem,
   type ProductStatus,
 } from "@/lib/productNav";
+import { StraddleChart } from "@/components/marketing/StraddleChart";
 
 const SAMPLE_STRATEGIES = [
   {
@@ -233,6 +234,20 @@ export default function WelcomePage() {
               <p className="mt-2 text-[13px] leading-relaxed text-slate-600">{p.body}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Live what-if charts */}
+      <section className="mx-auto max-w-6xl px-6 py-12">
+        <div className="mb-6 text-center">
+          <h2 className="text-2xl font-bold text-slate-900">Try a what-if, no signup</h2>
+          <p className="mt-2 text-sm text-slate-500">
+            See what an ATM straddle costs and how it pays off at different prices.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <StraddleChart symbol="NIFTY" spot={19800} daysToExpiry={7} volatility={18} />
+          <StraddleChart symbol="BANKNIFTY" spot={44500} daysToExpiry={5} volatility={22} />
         </div>
       </section>
 

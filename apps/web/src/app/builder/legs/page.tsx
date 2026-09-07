@@ -25,7 +25,8 @@ type ExpiryType = "weekly" | "next_weekly" | "monthly" | "next_monthly";
 type StrikeMode =
   | "strike_type" | "premium_ge" | "premium_le" | "premium_range"
   | "closest_premium" | "delta_range" | "straddle_width"
-  | "atm_straddle_premium_pct" | "closest_delta" | "synthetic_future" | "pct_of_atm";
+  | "atm_straddle_premium_pct" | "closest_delta" | "synthetic_future" | "pct_of_atm"
+  | "strike_multiplier";
 type MomentumDir = "up" | "down";
 type MomentumUnit = "pts" | "%";
 type TrailUnit = "pts" | "%";
@@ -44,6 +45,7 @@ interface Leg {
   strikeOffset: number;
   strikeValue: string;
   strikeValue2: string;
+  strikeMultiplier: string;
   targetEnabled: boolean;
   targetMode: SlMode;
   targetValue: string;
@@ -69,7 +71,7 @@ function mkLeg(action: Action, optType: OptType, offset = 0): Leg {
   return {
     id: `l_${Math.random().toString(36).slice(2, 8)}`,
     action, lots: 1, optType, expiryType: "weekly",
-    strikeMode: "strike_type", strikeOffset: offset, strikeValue: "", strikeValue2: "",
+    strikeMode: "strike_type", strikeOffset: offset, strikeValue: "", strikeValue2: "", strikeMultiplier: "",
     targetEnabled: false, targetMode: "%", targetValue: "50",
     slEnabled: false, slMode: "%", slValue: "20",
     trailEnabled: false, trailUnit: "%", trailTrigger: "20", trailBy: "10",
@@ -91,6 +93,7 @@ interface LazyLeg {
   strikeOffset: number;
   strikeValue: string;
   strikeValue2: string;
+  strikeMultiplier: string;
   targetEnabled: boolean;
   targetMode: SlMode;
   targetValue: string;
@@ -120,7 +123,7 @@ function mkLazyLeg(name: string): LazyLeg {
   return {
     id: `ll_${Math.random().toString(36).slice(2, 8)}`,
     name, action: "buy", lots: 1, optType: "CE", expiryType: "weekly",
-    strikeMode: "strike_type", strikeOffset: 0, strikeValue: "", strikeValue2: "",
+    strikeMode: "strike_type", strikeOffset: 0, strikeValue: "", strikeValue2: "", strikeMultiplier: "",
     targetEnabled: false, targetMode: "%", targetValue: "40",
     slEnabled: false, slMode: "%", slValue: "15",
     trailEnabled: false, trailUnit: "%", trailTrigger: "20", trailBy: "15",
@@ -163,6 +166,7 @@ const STRIKE_MODES: { value: StrikeMode; label: string }[] = [
   { value: "atm_straddle_premium_pct", label: "ATM Straddle Premium %" },
   { value: "synthetic_future", label: "Synthetic Future" },
   { value: "pct_of_atm", label: "% of ATM" },
+  { value: "strike_multiplier", label: "Strike Multiplier" },
 ];
 
 const EXPIRY_OPTIONS: { value: ExpiryType; label: string }[] = [
@@ -428,6 +432,7 @@ export default function LegBuilderPage() {
         strike_selection_value: l.strikeValue ? Number(l.strikeValue) : undefined,
         strike_selection_value_2: l.strikeValue2 ? Number(l.strikeValue2) : undefined,
         strike: l.strike,
+        strike_multiplier: l.strikeMode === "strike_multiplier" && l.strikeMultiplier ? Number(l.strikeMultiplier) : undefined,
         expiry_formula: l.expiryType.toUpperCase(),
         ...(l.slEnabled && l.slMode && l.slValue ? { sl_mode: l.slMode, sl_value: Number(l.slValue) } : {}),
         ...(l.targetEnabled && l.targetMode && l.targetValue ? { target_mode: l.targetMode, target_value: Number(l.targetValue) } : {}),
@@ -443,6 +448,7 @@ export default function LegBuilderPage() {
         strike_selection: l.strikeMode,
         strike_offset: l.strikeOffset,
         strike: atm + l.strikeOffset * step,
+        strike_multiplier: l.strikeMode === "strike_multiplier" && l.strikeMultiplier ? Number(l.strikeMultiplier) : undefined,
         expiry_formula: l.expiryType.toUpperCase(),
         ...(l.slEnabled && l.slMode && l.slValue ? { sl_mode: l.slMode, sl_value: Number(l.slValue) } : {}),
         ...(l.targetEnabled && l.targetMode && l.targetValue ? { target_mode: l.targetMode, target_value: Number(l.targetValue) } : {}),
@@ -740,6 +746,14 @@ export default function LegBuilderPage() {
                     <select value={l.strikeOffset} onChange={(e) => patchLeg(l.id, { strikeOffset: Number(e.target.value) })} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800">
                       {STRIKE_TYPE_OFFSETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                  ) : l.strikeMode === "strike_multiplier" ? (
+                    <input
+                      type="number"
+                      value={l.strikeMultiplier}
+                      onChange={(e) => patchLeg(l.id, { strikeMultiplier: e.target.value })}
+                      placeholder="e.g. 100"
+                      className="w-20 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800"
+                    />
                   ) : (
                     <input type="number" step="0.01" value={l.strikeValue} onChange={(e) => patchLeg(l.id, { strikeValue: e.target.value })} placeholder="Value" className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
                   )}
@@ -946,13 +960,21 @@ export default function LegBuilderPage() {
                 <select value={l.strikeMode} onChange={(e) => patchLazy(l.id, { strikeMode: e.target.value as StrikeMode })} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800">
                   {STRIKE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
-                {l.strikeMode === "strike_type" ? (
-                  <select value={l.strikeOffset} onChange={(e) => patchLazy(l.id, { strikeOffset: Number(e.target.value) })} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800">
-                    {STRIKE_TYPE_OFFSETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                ) : (
-                  <input type="number" step="0.01" value={l.strikeValue} onChange={(e) => patchLazy(l.id, { strikeValue: e.target.value })} placeholder="Value" className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
-                )}
+{l.strikeMode === "strike_type" ? (
+                    <select value={l.strikeOffset} onChange={(e) => patchLazy(l.id, { strikeOffset: Number(e.target.value) })} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-800">
+                      {STRIKE_TYPE_OFFSETS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : l.strikeMode === "strike_multiplier" ? (
+                    <input
+                      type="number"
+                      value={l.strikeMultiplier}
+                      onChange={(e) => patchLazy(l.id, { strikeMultiplier: e.target.value })}
+                      placeholder="e.g. 100"
+                      className="w-20 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800"
+                    />
+                  ) : (
+                    <input type="number" step="0.01" value={l.strikeValue} onChange={(e) => patchLazy(l.id, { strikeValue: e.target.value })} placeholder="Value" className="w-24 rounded border border-slate-300 px-2 py-1 text-xs text-slate-800" />
+                  )}
                 <div className="ml-auto flex items-center gap-1">
                   <button onClick={() => setCollapsedLazy((prev) => { const n = new Set(prev); if (n.has(l.id)) { n.delete(l.id); } else { n.add(l.id); } return n; })} className="text-[11px] text-blue-600 hover:underline">{collapsedLazy.has(l.id) ? "Expand" : "Collapse"}</button>
                   <button onClick={() => removeLazy(l.id)} className="text-[11px] text-red-500 hover:underline">Remove</button>

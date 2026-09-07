@@ -90,9 +90,11 @@ export interface OptionLeg {
     | "closest_delta"
     | "synthetic_future"
     | "pct_of_atm"
+    | "strike_multiplier"
     | null;
   strike_selection_value?: number | null;
   strike_selection_value_2?: number | null;
+  strike_multiplier?: number | null;
   lots?: number;
   lots_formula?: string | null;
   expiry?: string | null;

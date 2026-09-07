@@ -11,6 +11,7 @@ from app.models.optimization import OptimizationResult, OptimizationRun
 from app.models.paper import ForwardTestRun, PaperAccount, PaperOrder, PaperPosition
 from app.models.strategy import Strategy, StrategyVersion
 from app.models.user import User
+from app.models.webhook import WebhookDelivery, WebhookEndpoint
 
 __all__ = [
     "User",
@@ -29,4 +30,6 @@ __all__ = [
     "FuturesCandle",
     "OptionsCandle",
     "CANDLE_MODELS_BY_SEGMENT",
+    "WebhookEndpoint",
+    "WebhookDelivery",
 ]

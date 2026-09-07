@@ -13,6 +13,7 @@ import type {
   BacktestResults,
   BacktestSummary,
   BacktestTrade,
+  BacktestMini,
   ReplayCandle,
   ForwardTestRun,
   TickResult,
@@ -39,6 +40,10 @@ import type {
   RegisteredAlgoOut,
   DeploymentOut,
   BracketOut,
+  WebhookEndpointOut,
+  WebhookEndpointCreatedOut,
+  WebhookDeliveryLog,
+  BasketPayoffResponse,
 } from "./api";
 
 // ---------------------------------------------------------------------------
@@ -797,6 +802,160 @@ function mockMonteCarlo(): MonteCarloResponse {
   };
 }
 
+function mockBasketPayoff(body: Record<string, unknown>): BasketPayoffResponse {
+  const spot = Number(body.spot) || 23860;
+  const legs = (body.legs as Array<Record<string, unknown>>) ?? [];
+  const dte = Number(body.dte_days) || 7;
+  const vol = Number(body.volatility) || 16;
+  const sigma = vol / 100;
+  const T = Math.max(dte, 1) / 365;
+  const r = 0.06;
+
+  const SQRT_2PI = Math.sqrt(2 * Math.PI);
+  const normCdf = (x: number) => 0.5 * (1 + erf(x / Math.SQRT2));
+
+  function erf(x: number): number {
+    const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741;
+    const a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+    const sign = x < 0 ? -1 : 1;
+    x = Math.abs(x);
+    const t = 1 / (1 + p * x);
+    const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+    return sign * y;
+  }
+
+  function bsPrice(U: number, K: number, kind: "call" | "put"): number {
+    if (T <= 0 || sigma <= 0) {
+      return kind === "call" ? Math.max(0, U - K) : Math.max(0, K - U);
+    }
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(U / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    const disc = Math.exp(-r * T);
+    return kind === "call"
+      ? U * normCdf(d1) - K * disc * normCdf(d2)
+      : K * disc * normCdf(-d2) - U * normCdf(-d1);
+  }
+
+  function bsDelta(U: number, K: number, kind: "call" | "put"): number {
+    if (T <= 0 || sigma <= 0) {
+      return kind === "call" ? (U > K ? 1 : 0) : (U < K ? -1 : 0);
+    }
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(U / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    return kind === "call" ? normCdf(d1) : normCdf(d1) - 1;
+  }
+
+  function bsGamma(U: number, K: number): number {
+    if (T <= 0 || sigma <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(U / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    return Math.exp(-0.5 * d1 * d1) / SQRT_2PI / (U * sigma * sqrtT);
+  }
+
+  function bsTheta(U: number, K: number, kind: "call" | "put"): number {
+    if (T <= 0 || sigma <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(U / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    const disc = Math.exp(-r * T);
+    const npd1 = Math.exp(-0.5 * d1 * d1) / SQRT_2PI;
+    const common = -(U * npd1 * sigma) / (2 * sqrtT);
+    const perYear = kind === "call"
+      ? common - r * K * disc * normCdf(d2)
+      : common + r * K * disc * normCdf(-d2);
+    return perYear / 365;
+  }
+
+  function bsVega(U: number, K: number): number {
+    if (T <= 0 || sigma <= 0) return 0;
+    const sqrtT = Math.sqrt(T);
+    const d1 = (Math.log(U / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+    return U * Math.exp(-0.5 * d1 * d1) / SQRT_2PI * sqrtT * 0.01;
+  }
+
+  const payoff: BasketPayoffResponse["payoff"] = [];
+  for (let i = -50; i <= 50; i++) {
+    const U = spot * (1 + i * 0.0025);
+    let currentValue = 0;
+    let expiryValue = 0;
+    for (const leg of legs) {
+      const K = Number(leg.strike);
+      const qty = Number(leg.quantity ?? 1);
+      const sign = leg.action === "buy" ? 1 : -1;
+      const kind = leg.option_type === "CE" ? "call" : "put";
+      const intrinsic = kind === "call" ? Math.max(0, U - K) : Math.max(0, K - U);
+      const price = bsPrice(U, K, kind);
+      currentValue += sign * price * qty;
+      expiryValue += sign * intrinsic * qty;
+    }
+    payoff.push({
+      underlying: round(U, 2),
+      current_value: round(currentValue, 2),
+      expiry_value: round(expiryValue, 2),
+      combined_premium: round(currentValue, 2),
+    });
+  }
+
+  const breakevens: number[] = [];
+  for (let i = 0; i < payoff.length - 1; i++) {
+    const p0 = payoff[i];
+    const p1 = payoff[i + 1];
+    if ((p0.expiry_value <= 0 && p1.expiry_value > 0) || (p1.expiry_value <= 0 && p0.expiry_value > 0)) {
+      if (p1.expiry_value === p0.expiry_value) continue;
+      const t = -p0.expiry_value / (p1.expiry_value - p0.expiry_value);
+      const be = Math.round((p0.underlying + t * (p1.underlying - p0.underlying)) * 2) / 2;
+      breakevens.push(be);
+    }
+  }
+
+  let combinedDelta = 0, combinedGamma = 0, combinedTheta = 0, combinedVega = 0;
+  for (const leg of legs) {
+    const K = Number(leg.strike);
+    const qty = Number(leg.quantity ?? 1);
+    const sign = leg.action === "buy" ? 1 : -1;
+    const kind = leg.option_type === "CE" ? "call" : "put";
+    combinedDelta += sign * bsDelta(spot, K, kind) * qty;
+    combinedGamma += sign * bsGamma(spot, K) * qty;
+    combinedTheta += sign * bsTheta(spot, K, kind) * qty;
+    combinedVega += sign * bsVega(spot, K) * qty;
+  }
+
+  let netPremium = 0;
+  for (const leg of legs) {
+    const prem = Number(leg.premium) || 0;
+    const qty = Number(leg.quantity ?? 1);
+    const sign = leg.action === "buy" ? 1 : -1;
+    netPremium -= sign * prem * qty;
+  }
+
+  const expiryValues = payoff.map((p) => p.expiry_value);
+  const maxProfitVal = Math.max(...expiryValues);
+  const maxLossVal = Math.min(...expiryValues);
+
+  const boughtCalls = legs.some((l) => l.option_type === "CE" && l.action === "buy");
+  const soldCalls = legs.some((l) => l.option_type === "CE" && l.action === "sell");
+  const boughtPuts = legs.some((l) => l.option_type === "PE" && l.action === "buy");
+  const soldPuts = legs.some((l) => l.option_type === "PE" && l.action === "sell");
+
+  const profitUncapped = boughtCalls && !soldCalls;
+  const lossUncapped = (soldPuts && !boughtPuts) || (soldCalls && !boughtCalls);
+
+  return {
+    spot,
+    days_to_expiry: dte,
+    payoff,
+    breakeven_points: Array.from(new Set(breakevens)).sort((a, b) => a - b),
+    max_profit: profitUncapped ? null : round(maxProfitVal, 2),
+    max_loss: lossUncapped ? null : round(maxLossVal, 2),
+    net_premium: round(netPremium, 2),
+    combined_delta: round(combinedDelta, 4),
+    combined_gamma: round(combinedGamma, 4),
+    combined_theta: round(combinedTheta, 4),
+    combined_vega: round(combinedVega, 4),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // in-memory stores (session lifetime)
 // ---------------------------------------------------------------------------
@@ -1143,6 +1302,9 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
   if (pathOnly === "/options/payoff" && method === "POST") return ok(mockPayoff(JSON.parse((init.body as string) ?? "{}")));
   if (pathOnly === "/options/monte-carlo" && method === "POST") return ok(mockMonteCarlo());
 
+  // options basket (Milestone F)
+  if (pathOnly === "/basket/payoff" && method === "POST") return ok(mockBasketPayoff(JSON.parse((init.body as string) ?? "{}")));
+
   // quant
   if (pathOnly === "/quant/catalog" && method === "GET") return ok(mockCatalog());
   if (pathOnly === "/quant/validate" && method === "POST") return ok(mockValidate());
@@ -1488,6 +1650,259 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
       entry_signal: entry, exit_signal: !entry,
       direction: st.direction, actions, message: st.last_message,
       state: st,
+    });
+  }
+
+  // ---- webhooks (Milestone D) ----
+  let whEndpIdCounter = 1;
+  const webhookEndpoints: WebhookEndpointOut[] = [
+    {
+      id: "wh_mock_1",
+      user_id: "u_mock",
+      strategy_id: "s_ema",
+      provider: "tradingview",
+      slug: "tradingview_abc123def456",
+      name: "TV Alert — EMA Cross",
+      active: true,
+      created_at: daysAgo(5),
+    },
+    {
+      id: "wh_mock_2",
+      user_id: "u_mock",
+      strategy_id: null,
+      provider: "chartink",
+      slug: "chartink_xyz789ghi012",
+      name: "Chartink Scanner",
+      active: true,
+      created_at: daysAgo(3),
+    },
+  ];
+
+  m = pathOnly.match(/^\/webhooks$/);
+  if (m && method === "GET") return ok(webhookEndpoints);
+
+  if (pathOnly === "/webhooks" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const newEndpoint: WebhookEndpointCreatedOut = {
+      id: `wh_mock_${++whEndpIdCounter}`,
+      user_id: "u_mock",
+      strategy_id: body.strategy_id ?? null,
+      provider: body.provider ?? "tradingview",
+      slug: `${body.provider ?? "tradingview"}_mock${Math.random().toString(36).slice(2, 10)}`,
+      name: body.name ?? "New Webhook",
+      active: true,
+      created_at: isoDate(new Date()),
+      secret: "mock_secret_" + Math.random().toString(36).slice(2, 14),
+      webhook_url: `http://localhost:8000/api/v1/webhooks/${body.provider ?? "tradingview"}_mock${Math.random().toString(36).slice(2, 10)}`,
+    };
+    webhookEndpoints.push(newEndpoint);
+    return ok(newEndpoint);
+  }
+
+  m = pathOnly.match(/^\/webhooks\/([^/]+)$/);
+  if (m && method === "GET") {
+    const ep = webhookEndpoints.find((e) => e.id === m![1]);
+    return ep ? ok(ep) : err(404, "Webhook endpoint not found");
+  }
+
+  if (m && method === "PATCH") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const idx = webhookEndpoints.findIndex((e) => e.id === m![1]);
+    if (idx === -1) return err(404, "Webhook endpoint not found");
+    webhookEndpoints[idx] = { ...webhookEndpoints[idx], ...body };
+    return ok(webhookEndpoints[idx]);
+  }
+
+  if (m && method === "DELETE") {
+    const idx = webhookEndpoints.findIndex((e) => e.id === m![1]);
+    if (idx === -1) return err(404, "Webhook endpoint not found");
+    webhookEndpoints.splice(idx, 1);
+    return Promise.resolve({ status: 204, body: undefined });
+  }
+
+  m = pathOnly.match(/^\/webhooks\/([^/]+)\/logs$/);
+  if (m && method === "GET") {
+    const ep = webhookEndpoints.find((e) => e.id === m![1]);
+    if (!ep) return err(404, "Webhook endpoint not found");
+    const logs: WebhookDeliveryLog[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `wh_log_${m![1]}_${i}`,
+      endpoint_id: ep.id,
+      received_at: daysAgo(i),
+      action: i % 3 === 0 ? "buy" : i % 3 === 1 ? "sell" : "trigger",
+      status: i === 0 ? "success" : i === 1 ? "error" : "skipped",
+      response: i === 0 ? "forward test ticked" : i === 1 ? "no candles available" : "action unknown, skipped",
+    }));
+    return ok(logs);
+  }
+
+  m = pathOnly.match(/^\/webhooks\/([^/]+)$/);
+  if (m && method === "POST") {
+    const ep = webhookEndpoints.find((e) => e.slug === m![1]);
+    if (!ep) return err(404, "Webhook endpoint not found");
+    if (!ep.active) return err(400, "Webhook endpoint is inactive");
+    return ok({ ok: true, message: "Triggered forward test", action: "buy", delivery_id: `wh_delivery_${Date.now()}` });
+  }
+
+  // ---- portfolio (Milestone C) ----
+  if (pathOnly === "/portfolio/backtest" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const strategyIds = body.strategy_ids ?? ["s_ema", "s_rsi"];
+    const capital = Number(body.initial_capital) || 1_000_000;
+    const costs = Number(body.costs_pct) ?? 0.05;
+    const start = body.start ?? daysAgo(120);
+    const end = body.end ?? daysAgo(1);
+
+    const runs: BacktestMini[] = strategyIds.map((sid: string, i: number) => {
+      const strat = SEED_STRATS.find((s) => s.id === sid) ?? SEED_STRATS[i % SEED_STRATS.length];
+      const cfg = { initial_capital: capital, costs_pct: costs, start, end };
+      const results = genBacktestResults(sid, cfg);
+      return {
+        run_id: `pf_${sid}_${isoDate(new Date()).slice(0, 10)}`,
+        strategy_id: sid,
+        strategy_name: strat.name,
+        status: "completed",
+        summary: results.summary,
+        equity_curve: results.equity_curve,
+      };
+    });
+
+    let combinedCurve: { time: string; equity: number }[] = [];
+    if (runs.length >= 2) {
+      const curve0 = runs[0].equity_curve;
+      const curve1 = runs[1].equity_curve;
+      const len = Math.min(curve0.length, curve1.length);
+      combinedCurve = curve0.slice(0, len).map((p, i) => ({
+        time: p.time,
+        equity: round((curve0[i].equity + (curve1[i]?.equity ?? curve0[i].equity)) / 2, 2),
+      }));
+    } else if (runs.length === 1) {
+      combinedCurve = runs[0].equity_curve;
+    }
+
+    const combinedSummary = computeSummary(combinedCurve, [], capital * runs.length, costs);
+    return ok({ runs, combined_equity_curve: combinedCurve, combined_summary: combinedSummary, error: null });
+  }
+
+  if (pathOnly === "/portfolio/combine" && method === "GET") {
+    const runIds = (params.get("run_ids") ?? "").split(",").filter(Boolean);
+    const runs = seedRuns.filter((r) => runIds.includes(r.id)).map((r) => {
+      const strat = SEED_STRATS.find((s) => s.id === r.strategy_id);
+      const results = r.result_summary;
+      return {
+        run_id: r.id,
+        strategy_id: r.strategy_id,
+        strategy_name: strat?.name ?? "Strategy",
+        status: r.status,
+        summary: results?.summary ?? null,
+        equity_curve: results?.equity_curve ?? [],
+      } as BacktestMini;
+    });
+    const capital = runs.reduce((a, r) => a + (r.summary?.initial_capital ?? 100000), 0);
+    const combinedCurve: { time: string; equity: number }[] = runs.length
+      ? runs.reduce<{ time: string; equity: number }[]>((acc, run, i) =>
+          run.equity_curve.map((p, j) => {
+            if (i === 0) return p;
+            acc[j] = { time: p.time, equity: round((acc[j]?.equity ?? p.equity) + p.equity, 2) };
+            return acc[j];
+          }), [])
+      : [];
+    const combinedSummary = computeSummary(combinedCurve, [], capital, 0.05);
+    return ok({ runs, combined_equity_curve: combinedCurve, combined_summary: combinedSummary, error: null });
+  }
+
+  if (pathOnly === "/portfolio/daily-pnl" && method === "GET") {
+    const d0 = new Date(NOW);
+    d0.setDate(d0.getDate() - 30);
+    const pts: { date: string; pnl: number; cumulative: number }[] = [];
+    let cum = 0;
+    for (let i = 0; i < 30; i++) {
+      const d = addDays(d0, i);
+      const pnl = round((rnd(`daily${i}`)() - 0.45) * 5000, 2);
+      cum += pnl;
+      pts.push({ date: d.toISOString().slice(0, 10), pnl, cumulative: round(cum, 2) });
+    }
+    return ok({ points: pts, error: null });
+  }
+
+  // ---- reports (Milestone E) ----
+  if (pathOnly === "/reports/drawdown-mc" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const r = rnd("ddmc" + (body.run_id ?? ""));
+    const nRuns = Number(body.n_runs) || 1000;
+    const points = 120;
+    let eq = 100000;
+    let peak = eq;
+    const equity: { time: string; equity: number }[] = [];
+    const ddCurve: { time: string; drawdown_pct: number }[] = [];
+    const d0 = new Date(NOW);
+    d0.setDate(d0.getDate() - points);
+    let maxDD = 0;
+    for (let i = 0; i < points; i++) {
+      eq = eq * (1 + (r() - 0.46) * 0.02);
+      const d = addDays(d0, i);
+      d.setHours(9, 15 + (i % 6) * 10, 0, 0);
+      equity.push({ time: isoDate(d), equity: round(eq, 2) });
+      if (eq > peak) peak = eq;
+      const dd = ((peak - eq) / peak) * 100;
+      if (dd > maxDD) maxDD = dd;
+      ddCurve.push({ time: isoDate(d), drawdown_pct: round(dd, 2) });
+    }
+    const stats = {
+      mean_dd: round(maxDD * 0.85 + r() * 2, 2),
+      std_dd: round(2 + r() * 3, 2),
+      p5_dd: round(maxDD * 0.35 + r() * 1, 2),
+      p50_dd: round(maxDD * 0.7 + r() * 1.5, 2),
+      p95_dd: round(maxDD * 1.4 + r() * 2, 2),
+      worst_dd: round(maxDD * 1.8 + r() * 3, 2),
+      best_dd: round(maxDD * 0.15 + r() * 0.5, 2),
+      prob_recovery: round(60 + r() * 35, 1),
+    };
+    return ok({
+      equity_curve: equity,
+      drawdown_curve: ddCurve,
+      peak_equity: round(peak, 2),
+      trough_equity: round(Math.min(...equity.map((p) => p.equity)), 2),
+      max_drawdown_pct: round(maxDD, 2),
+      mc_runs: nRuns,
+      mc_stats: stats,
+    });
+  }
+
+  if (pathOnly === "/reports/daily-pnl" && method === "GET") {
+    const d0 = new Date(NOW);
+    d0.setDate(d0.getDate() - 30);
+    const pts: { date: string; pnl: number; cumulative: number }[] = [];
+    let cum = 0;
+    let wins = 0;
+    let losses = 0;
+    for (let i = 0; i < 30; i++) {
+      const d = addDays(d0, i);
+      const pnl = round((rnd(`rep${i}`)() - 0.42) * 4500, 2);
+      cum += pnl;
+      if (pnl > 0) wins++;
+      else if (pnl < 0) losses++;
+      pts.push({ date: d.toISOString().slice(0, 10), pnl, cumulative: round(cum, 2) });
+    }
+    return ok({
+      points: pts,
+      total_pnl: round(cum, 2),
+      total_trades: 14 * 3,
+      winning_days: wins,
+      losing_days: losses,
+    });
+  }
+
+  if (pathOnly === "/reports/portfolio-summary" && method === "GET") {
+    const r = rnd("pfsum");
+    return ok({
+      total_strategies: 6,
+      total_runs: 12,
+      total_trades: 168,
+      net_pnl: round(8400 + r() * 6000, 2),
+      avg_return_pct: round(8 + r() * 14, 2),
+      max_drawdown_pct: round(4 + r() * 6, 2),
+      sharpe_ratio: round(1.1 + r() * 1.2, 2),
+      win_rate: round(48 + r() * 18, 2),
     });
   }
 

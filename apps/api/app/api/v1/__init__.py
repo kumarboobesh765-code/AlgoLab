@@ -5,6 +5,7 @@ from app.api.v1 import (
     auth,
     automation,
     backtests,
+    basket,
     calendar,
     data,
     execution,
@@ -14,6 +15,7 @@ from app.api.v1 import (
     optimizations,
     options,
     paper,
+    portfolio,
     quant,
     strategies,
     strategies_polish,
@@ -27,6 +29,7 @@ api_router.include_router(strategies_polish.router)
 api_router.include_router(strategies.router)
 api_router.include_router(market.router)
 api_router.include_router(options.router)
+api_router.include_router(basket.router)
 api_router.include_router(execution.router)
 api_router.include_router(data.router)
 api_router.include_router(quant.router)
@@ -37,4 +40,5 @@ api_router.include_router(forward_tests.router)
 api_router.include_router(optimizations.router)
 api_router.include_router(calendar.router)
 api_router.include_router(tax.router)
+api_router.include_router(portfolio.router)
 api_router.include_router(automation.router)
