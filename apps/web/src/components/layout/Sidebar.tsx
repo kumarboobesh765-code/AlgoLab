@@ -87,7 +87,6 @@ export function Sidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => v
                     key={item.href}
                     label={item.label}
                     href={item.href}
-                    soon={item.soon}
                     active={
                       item.href === "/" ? pathname === "/" : pathname.startsWith(item.href)
                     }
