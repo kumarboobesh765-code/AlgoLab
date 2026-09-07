@@ -89,6 +89,9 @@ class LegwiseSettings(BaseModel):
     trail_sl_to_breakeven: Literal["none", "sl_legs", "all_legs"] = "none"
     # Square-off propagation: if one leg SL hits, square off all legs
     square_off_on_leg_sl: bool = False
+    # Move-to-Cost: when one leg hits SL and opposite leg is in profit,
+    # move opposite leg's SL to its entry price (breakeven protection)
+    move_to_cost: bool = False
 
 
 class OverallConfig(BaseModel):
@@ -111,6 +114,11 @@ class OverallConfig(BaseModel):
     # Re-entry on overall SL / Target
     overall_reentry_on_sl: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse"] | None = None
     overall_reentry_on_target: Literal["asap", "asap_reverse", "cost", "cost_reverse", "momentum", "momentum_reverse", "reexecute", "reexecute_reverse"] | None = None
+    # Daily limits (kill switch for overtrading)
+    daily_sl: float | None = Field(default=None, description="Daily max loss in ₹ (kill switch)")
+    daily_target: float | None = Field(default=None, description="Daily max profit in ₹ (freeze)")
+    # Spike protection: delay SL execution by N candles on sudden price spikes
+    spike_protection_candles: int = Field(default=0, ge=0, le=10, description="Skip SL check for N candles after entry")
 
 
 class RangeBreakoutConfig(BaseModel):

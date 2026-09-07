@@ -282,6 +282,58 @@ export default function TechnicalBuilderPage() {
   const lotSize = lotSizes[symbol] ?? 50;
   const spot = chain?.spot ?? 0;
 
+  function applyDefinition(def: StrategyDefinitionV1) {
+    if (def.instrument) {
+      setSymbol(def.instrument.symbol ?? "NIFTY");
+      setExchange(def.instrument.exchange ?? "NSE");
+      if (def.instrument.segment === "cash") setSegment("stocks");
+      else if (symbol.toUpperCase() === "BTCINR" || symbol.toUpperCase() === "ETHINR") setSegment("crypto");
+    }
+    if (def.timeframe) setCandleInterval(def.timeframe as typeof TIMEFRAMES[number]);
+    if (def.indicators) setIndicators(def.indicators);
+    if (def.strategy_type) setTradeType(def.strategy_type);
+    if (def.max_position_in_a_day !== undefined) setMaxTxns(String(def.max_position_in_a_day));
+    if (def.time_control) {
+      if (def.time_control.no_entry_after) setTradeFrom(def.time_control.no_entry_after);
+      if (def.time_control.time_exit) setTradeTo(def.time_control.time_exit);
+    }
+    if (def.overall) {
+      if (def.overall.overall_sl !== null) setDailySl(String(def.overall.overall_sl));
+      if (def.overall.overall_target !== null) setDailyTp(String(def.overall.overall_target));
+    }
+    if (def.risk) {
+      if (def.risk.stop_loss_pct !== null) setTxSlPct(String(def.risk.stop_loss_pct));
+      if (def.risk.target_pct !== null) setTxTpPct(String(def.risk.target_pct));
+      if (def.risk.trailing_sl_pct !== null) {
+        setFeatTrailing(true);
+        setTrailingPct(String(def.risk.trailing_sl_pct));
+      }
+    }
+    setCases([{ id: uid("case"), name: "Case 1", entry: def.entry, exit: def.exit ?? { logic: "ALL", conditions: [] } }]);
+    if (def.legs && def.legs.length > 0) {
+      setLegs(
+        def.legs.map((leg) => ({
+          id: uid("leg"),
+          lots: leg.lots ?? 1,
+          action: leg.action,
+          option_type: leg.option_type,
+          expiry: (leg.expiry_formula?.toUpperCase() as LegRow["expiry"]) ?? "WEEKLY",
+          strike_offset: leg.strike_offset ?? 0,
+          slPts: leg.sl_mode === "pts" && leg.sl_value !== null ? String(leg.sl_value) : "",
+          slPct: leg.sl_mode === "%" && leg.sl_value !== null ? String(leg.sl_value) : "",
+          tpPts: leg.target_mode === "pts" && leg.target_value !== null ? String(leg.target_value) : "",
+          tpPct: leg.target_mode === "%" && leg.target_value !== null ? String(leg.target_value) : "",
+          moveToCost: false,
+          adjustment: leg.reentry_on_sl ?? "none",
+          reentryMax: String(leg.max_reentries ?? 0),
+          reexecute: leg.reentry_on_target === "reexecute",
+          openNewLegs: false,
+          advancedOpen: false,
+        })),
+      );
+    }
+  }
+
   /* strategy-library handoff ("Edit from library" / template handoff) */
   useEffect(() => {
     let raw: string | null = null;
@@ -457,58 +509,6 @@ export default function TechnicalBuilderPage() {
     dailySl, dailyTp, candleInterval, symbol, exchange, indicators, cases, tradeType,
     maxTxns, underlyingSource, tradeFrom, tradeTo, featTrailing, trailingPct,
   ]);
-
-  function applyDefinition(def: StrategyDefinitionV1) {
-    if (def.instrument) {
-      setSymbol(def.instrument.symbol ?? "NIFTY");
-      setExchange(def.instrument.exchange ?? "NSE");
-      if (def.instrument.segment === "cash") setSegment("stocks");
-      else if (symbol.toUpperCase() === "BTCINR" || symbol.toUpperCase() === "ETHINR") setSegment("crypto");
-    }
-    if (def.timeframe) setCandleInterval(def.timeframe as typeof TIMEFRAMES[number]);
-    if (def.indicators) setIndicators(def.indicators);
-    if (def.strategy_type) setTradeType(def.strategy_type);
-    if (def.max_position_in_a_day !== undefined) setMaxTxns(String(def.max_position_in_a_day));
-    if (def.time_control) {
-      if (def.time_control.no_entry_after) setTradeFrom(def.time_control.no_entry_after);
-      if (def.time_control.time_exit) setTradeTo(def.time_control.time_exit);
-    }
-    if (def.overall) {
-      if (def.overall.overall_sl !== null) setDailySl(String(def.overall.overall_sl));
-      if (def.overall.overall_target !== null) setDailyTp(String(def.overall.overall_target));
-    }
-    if (def.risk) {
-      if (def.risk.stop_loss_pct !== null) setTxSlPct(String(def.risk.stop_loss_pct));
-      if (def.risk.target_pct !== null) setTxTpPct(String(def.risk.target_pct));
-      if (def.risk.trailing_sl_pct !== null) {
-        setFeatTrailing(true);
-        setTrailingPct(String(def.risk.trailing_sl_pct));
-      }
-    }
-    setCases([{ id: uid("case"), name: "Case 1", entry: def.entry, exit: def.exit ?? { logic: "ALL", conditions: [] } }]);
-    if (def.legs && def.legs.length > 0) {
-      setLegs(
-        def.legs.map((leg) => ({
-          id: uid("leg"),
-          lots: leg.lots ?? 1,
-          action: leg.action,
-          option_type: leg.option_type,
-          expiry: (leg.expiry_formula?.toUpperCase() as LegRow["expiry"]) ?? "WEEKLY",
-          strike_offset: leg.strike_offset ?? 0,
-          slPts: leg.sl_mode === "pts" && leg.sl_value !== null ? String(leg.sl_value) : "",
-          slPct: leg.sl_mode === "%" && leg.sl_value !== null ? String(leg.sl_value) : "",
-          tpPts: leg.target_mode === "pts" && leg.target_value !== null ? String(leg.target_value) : "",
-          tpPct: leg.target_mode === "%" && leg.target_value !== null ? String(leg.target_value) : "",
-          moveToCost: false,
-          adjustment: leg.reentry_on_sl ?? "none",
-          reentryMax: String(leg.max_reentries ?? 0),
-          reexecute: leg.reentry_on_target === "reexecute",
-          openNewLegs: false,
-          advancedOpen: false,
-        })),
-      );
-    }
-  }
 
   /* ------------------------------------------------------------------ */
   /* Actions                                                            */
