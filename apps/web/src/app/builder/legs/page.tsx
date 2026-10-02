@@ -271,7 +271,6 @@ export default function LegBuilderPage() {
   const [collapsedLegs, setCollapsedLegs] = useState<Set<string>>(new Set());
   const [collapsedLazy, setCollapsedLazy] = useState<Set<string>>(new Set());
 
-  const [segment, setSegment] = useState<"weekly_monthly" | "stocks" | "crypto">("weekly_monthly");
   const [underlyingSource, setUnderlyingSource] = useState<"cash" | "futures">("cash");
   const [strategyType, setStrategyType] = useState<StrategyType>("intraday");
   const [entryTime, setEntryTime] = useState("09:35");
@@ -532,19 +531,6 @@ export default function LegBuilderPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Instrument Settings */}
         <Card title="Instrument settings">
-          <div className="mb-3 flex gap-0 border-b border-slate-200">
-            {([
-              { key: "weekly_monthly" as const, label: "Weekly & Monthly Expiries", sub: "NIFTY | SENSEX" },
-              { key: "stocks" as const, label: "Stocks - Cash / F&O", sub: "ALL NIFTY 500 STOCKS" },
-              { key: "crypto" as const, label: "Crypto", sub: "Delta Exchange & CoinSwitch" },
-            ]).map((tab) => (
-              <button key={tab.key} onClick={() => setSegment(tab.key)}
-                className={`flex-1 px-3 py-2 text-center text-xs font-medium transition-colors ${segment === tab.key ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-500 hover:text-slate-700"}`}>
-                {tab.label}
-                <span className="block text-[10px] text-slate-400">{tab.sub}</span>
-              </button>
-            ))}
-          </div>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block text-xs font-medium text-slate-500">
               Index

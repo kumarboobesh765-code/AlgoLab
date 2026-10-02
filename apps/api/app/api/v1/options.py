@@ -275,7 +275,6 @@ async def options_backtest(provider: ProviderDep, request: OptionsBacktestReques
         initial_capital=request.initial_capital,
         volatility=request.volatility,
         lot_size=request.lot_size,
-        auto_roll=request.auto_roll,
     )
 
     try:

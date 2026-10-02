@@ -156,7 +156,6 @@ class OptionsBacktestRequest(BaseModel):
     volatility: float = Field(default=0.20, gt=0, le=5)
     lot_size: int = Field(default=50, ge=1, le=10000)
     initial_capital: float = Field(default=100000, gt=0)
-    auto_roll: bool = Field(default=True)
     use_real_premiums: bool = Field(default=False)
 
 

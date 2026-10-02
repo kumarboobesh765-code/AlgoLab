@@ -34,6 +34,25 @@ def _bs_price(S: float, K: float, T: float, sigma: float, is_call: bool) -> floa
     return K * math.exp(-RISK_FREE * T) * (1 - nd2) - S * (1 - nd1)
 
 
+def _bs_delta(S: float, K: float, T: float, sigma: float, is_call: bool) -> float:
+    """Black-Scholes delta in [-1, 1]."""
+    if T <= 0 or sigma <= 0:
+        if is_call:
+            return 1.0 if S > K else 0.0
+        return -1.0 if S < K else 0.0
+    d1 = (math.log(S / K) + (RISK_FREE + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    nd1 = 0.5 * (1 + math.erf(d1 / math.sqrt(2)))
+    return nd1 if is_call else nd1 - 1.0
+
+
+def _bs_gamma(S: float, K: float, T: float, sigma: float) -> float:
+    """Black-Scholes gamma, used to convert an underlying move into a premium move."""
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    d1 = (math.log(S / K) + (RISK_FREE + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    return math.exp(-0.5 * d1 * d1) / (S * sigma * math.sqrt(2 * math.pi * T))
+
+
 def _parse_time_hm(t: str | None) -> int | None:
     if not t:
         return None
@@ -126,21 +145,45 @@ class OptionsConfig:
     costs_pct: float = 0.03
     volatility: float = 0.20
     lot_size: int = 50
-    auto_roll: bool = True
 
 
-def _compute_sl_target(leg, entry_price: float, entry_underlying: float, step: int) -> tuple[float | None, float | None]:
+def _compute_sl_target(
+    leg,
+    entry_price: float,
+    entry_underlying: float,
+    step: int,
+    sigma: float = 0.20,
+    T: float = 0.0,
+) -> tuple[float | None, float | None]:
+    """Resolve a leg's SL/target to static premium levels.
+
+    ``sl_mode == "delta"`` is inherently a *dynamic* trigger, so it yields no
+    static price here; it is evaluated per-bar in the main loop via
+    _delta_sl_hit(). Returning None for it is correct, not a silent failure.
+    """
     sl = None
     tgt = None
-    if leg.sl_mode and leg.sl_value:
+
+    def _from_underlying(value: float, mode: str, sign: float) -> float:
+        """Convert an underlying move into a premium move.
+
+        Previously this was a flat ``u_move * 0.5`` pass-through, which ignored
+        moneyness entirely. Use gamma so the conversion reflects how responsive
+        the premium actually is at that strike.
+        """
+        u_move = value if mode == "underlying_pts" else entry_underlying * value / 100.0
+        g = _bs_gamma(entry_underlying, leg.strike or entry_underlying, max(T, 1e-6), sigma)
+        premium_move = g * u_move if g > 0 else u_move * 0.5
+        return entry_price + sign * premium_move
+
+    if leg.sl_mode and leg.sl_value and leg.sl_mode != "delta":
         if leg.sl_mode == "pts":
             sl = entry_price - leg.sl_value if leg.action == "buy" else entry_price + leg.sl_value
         elif leg.sl_mode == "%":
             pct = leg.sl_value / 100.0
             sl = entry_price * (1 - pct) if leg.action == "buy" else entry_price * (1 + pct)
         elif leg.sl_mode in ("underlying_pts", "underlying_pct"):
-            u_move = leg.sl_value if leg.sl_mode == "underlying_pts" else entry_underlying * leg.sl_value / 100.0
-            sl = entry_price - u_move * 0.5 if leg.action == "buy" else entry_price + u_move * 0.5
+            sl = _from_underlying(leg.sl_value, leg.sl_mode, -1.0 if leg.action == "buy" else 1.0)
     if leg.target_mode and leg.target_value:
         if leg.target_mode == "pts":
             tgt = entry_price + leg.target_value if leg.action == "buy" else entry_price - leg.target_value
@@ -148,9 +191,34 @@ def _compute_sl_target(leg, entry_price: float, entry_underlying: float, step: i
             pct = leg.target_value / 100.0
             tgt = entry_price * (1 + pct) if leg.action == "buy" else entry_price * (1 - pct)
         elif leg.target_mode in ("underlying_pts", "underlying_pct"):
-            u_move = leg.target_value if leg.target_mode == "underlying_pts" else entry_underlying * leg.target_value / 100.0
-            tgt = entry_price + u_move * 0.5 if leg.action == "buy" else entry_price - u_move * 0.5
+            tgt = _from_underlying(leg.target_value, leg.target_mode, 1.0 if leg.action == "buy" else -1.0)
     return sl, tgt
+
+
+def _delta_sl_hit(
+    leg,
+    action: str,
+    spot: float,
+    strike: float,
+    T: float,
+    sigma: float,
+) -> bool:
+    """Evaluate a delta-based stop loss for an open leg.
+
+    Semantic:
+    - bought leg  -> stop out once |delta| decays to or below the threshold
+      (the position has stopped being directional in our favour)
+    - sold leg    -> stop out once |delta| rises to or above the threshold
+      (short-gamma exposure growing against us)
+
+    ``leg.sl_value`` holds the threshold as an absolute delta (0-100 UI scale is
+    normalised by the caller).
+    """
+    if not leg.sl_mode or leg.sl_mode != "delta" or not leg.sl_value:
+        return False
+    threshold = leg.sl_value / 100.0
+    d = abs(_bs_delta(spot, strike, T, sigma, leg.option_type == "CE"))
+    return d <= threshold if action == "buy" else d >= threshold
 
 
 def run_options_backtest(
@@ -354,7 +422,7 @@ def run_options_backtest(
         cost = premium * lots * costs_pct / 100.0
         cash -= cost
         total_costs += cost
-        sl, tgt = _compute_sl_target(leg, premium, S, step)
+        sl, tgt = _compute_sl_target(leg, premium, S, step, sigma=iv, T=T)
         trail_step_val = leg.trail_step or 0
         trail_by_val = leg.trail_by or 0
         positions[li] = LegPosition(
@@ -455,6 +523,17 @@ def run_options_backtest(
         entry_dbe = time_cfg.entry_days_before_expiry if time_cfg else None
         exit_dbe = time_cfg.exit_days_before_expiry if time_cfg else None
 
+        # reentry_time_restriction decides which side of no_reentry_after is
+        # open. "none"/"before_time" keep the historical behaviour (re-entries
+        # allowed before the cutoff); "after_time" inverts it.
+        reentry_mode = definition.reentry_time_restriction or "none"
+        reentry_after_only = reentry_mode == "after_time"
+
+        def _reentry_allowed(bar_minute: int) -> bool:
+            if no_reentry is None:
+                return True
+            return bar_minute >= no_reentry if reentry_after_only else bar_minute < no_reentry
+
         bar_date = bar.timestamp.date() if hasattr(bar.timestamp, "date") else None
 
         # Force-exit on time_exit OR stop_monitoring_after
@@ -510,7 +589,7 @@ def run_options_backtest(
                     cost = premium_now * pos.lots * costs_pct / 100.0
                     cash -= cost
                     total_costs += cost
-                    sl, tgt = _compute_sl_target(legs[li], premium_now, S, step)
+                    sl, tgt = _compute_sl_target(legs[li], premium_now, S, step, sigma=iv, T=T)
                     pos.entry_price = premium_now
                     pos.entry_index = i
                     pos.sl_price = sl
@@ -581,6 +660,10 @@ def run_options_backtest(
                 continue
             premium = _leg_premium(S, pos.strike, T, pos.option_type)
             spike_grace = spike_candles > 0 and (i - pos.entry_index) <= spike_candles
+            leg = legs[li]
+            if not spike_grace and _delta_sl_hit(leg, pos.action, S, pos.strike, T, iv):
+                _close_leg(li, bar, "stop_loss")
+                continue
             if pos.sl_price is not None and not spike_grace:
                 triggered = (pos.action == "buy" and premium <= pos.sl_price) or (pos.action == "sell" and premium >= pos.sl_price)
                 if triggered:
@@ -595,7 +678,7 @@ def run_options_backtest(
                                     continue
                                 other_pos.sl_price = other_pos.entry_price
                     if pos.reentry_on_sl and pos.reentry_count < pos.max_reentries:
-                        if no_reentry is None or bar_min < no_reentry:
+                        if _reentry_allowed(bar_min):
                             if pos.reentry_on_sl == "range_breakout" and rb_cfg:
                                 rb_reentry[li] = True
                                 pending_entries[li] = True
@@ -609,7 +692,7 @@ def run_options_backtest(
                 if triggered:
                     _close_leg(li, bar, "target")
                     if pos.reentry_on_target and pos.reentry_count < pos.max_reentries:
-                        if no_reentry is None or bar_min < no_reentry:
+                        if _reentry_allowed(bar_min):
                             if pos.reentry_on_target == "range_breakout" and rb_cfg:
                                 rb_reentry[li] = True
                                 pending_entries[li] = True

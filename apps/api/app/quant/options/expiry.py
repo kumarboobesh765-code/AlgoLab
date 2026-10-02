@@ -3,12 +3,18 @@
 Supports weekly/monthly expiry selection with formulas like:
 - THIS_WEEK, NEXT_WEEK, THIS_MONTH, NEXT_MONTH
 - WEEKLY, MONTHLY (nearest)
+
+Also accepts the *-LY suffixed spellings emitted by the web builders
+(NEXT_WEEKLY, NEXT_MONTHLY, CURRENT_WEEK, CURRENT_MONTH) via EXPIRY_ALIASES.
 """
 
 import calendar
+import logging
 from datetime import date, datetime, timedelta
 
 from app.quant.options.formulas import ExpiryType
+
+logger = logging.getLogger(__name__)
 
 
 def is_market_holiday(dt: date) -> bool:
@@ -117,6 +123,24 @@ def days_to_expiry(reference: date, expiry: date) -> float:
     return float(delta.days)
 
 
+# Aliases accepted in addition to the canonical ExpiryType tokens.
+#
+# The web builders emit the *-LY suffixed spellings ("NEXT_WEEKLY",
+# "NEXT_MONTHLY") while the canonical tokens are NEXT_WEEK / NEXT_MONTH.
+# Without these aliases an unrecognised token fell through to the
+# get_weekly_expiry() default, so "Next Monthly" silently resolved to the
+# current *weekly* expiry and users traded the wrong contract.
+EXPIRY_ALIASES: dict[str, str] = {
+    "CURRENT_WEEK": "THIS_WEEK",
+    "CURRENT_MONTH": "THIS_MONTH",
+    "NEXT_WEEKLY": "NEXT_WEEK",
+    "NEXT_MONTHLY": "NEXT_MONTH",
+    "WEEKLY_NEXT": "NEXT_WEEK",
+    "MONTHLY_NEXT": "NEXT_MONTH",
+    "CURRENT_EXPIRY": "THIS_WEEK",
+}
+
+
 def parse_expiry_formula(
     formula: str,
     reference: date | None = None,
@@ -124,10 +148,10 @@ def parse_expiry_formula(
     """Parse and evaluate an expiry formula string.
 
     Supported formats:
-    - "THIS_WEEK" -> This week's Thursday
-    - "NEXT_WEEK" -> Next week's Thursday
-    - "THIS_MONTH" -> This month's last Thursday
-    - "NEXT_MONTH" -> Next month's last Thursday
+    - "THIS_WEEK" / "CURRENT_WEEK" -> This week's expiry
+    - "NEXT_WEEK" / "NEXT_WEEKLY" -> Next week's expiry
+    - "THIS_MONTH" / "CURRENT_MONTH" -> This month's last expiry
+    - "NEXT_MONTH" / "NEXT_MONTHLY" -> Next month's last expiry
     - "WEEKLY" -> Nearest weekly expiry
     - "MONTHLY" -> Nearest monthly expiry
     - "2024-12-26" -> Fixed date (YYYY-MM-DD)
@@ -141,6 +165,8 @@ def parse_expiry_formula(
     """
     formula = formula.strip().upper()
     ref = reference or date.today()
+
+    formula = EXPIRY_ALIASES.get(formula, formula)
 
     if formula in ("THIS_WEEK", "WEEKLY"):
         return get_weekly_expiry(ref)
@@ -165,6 +191,15 @@ def parse_expiry_formula(
     except ValueError:
         pass
 
+    # Do not fail hard: strategies persisted before the alias table existed may
+    # hold other unrecognised tokens, and raising here would turn a previously
+    # runnable backtest into a 400. Fall back to the nearest weekly expiry but
+    # make it diagnosable instead of silent.
+    logger.warning(
+        "Unrecognised expiry formula %r; falling back to nearest weekly expiry. "
+        "Add it to EXPIRY_ALIASES if it is a legitimate token.",
+        formula,
+    )
     return get_weekly_expiry(ref)
 
 

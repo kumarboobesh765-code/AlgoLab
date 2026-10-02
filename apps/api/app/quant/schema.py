@@ -306,7 +306,14 @@ class StrategyDefinition(BaseModel):
     skip_initial_candles: int = Field(default=0, ge=0, le=50, description="Skip first N candles before evaluating")
     max_position_in_a_day: int = Field(default=0, ge=0, le=100, description="Max entries per day (0 = unlimited)")
     cash_or_futures: Literal["cash", "futures"] = "cash"
-    reentry_time_restriction: Literal["none", "after_time", "before_time"] = "none"
+    reentry_time_restriction: Literal["none", "after_time", "before_time"] = Field(
+        default="none",
+        description=(
+            "How time_control.no_reentry_after gates re-entries. "
+            '"none" and "before_time" both block re-entries at/after that time; '
+            '"after_time" inverts it and only allows re-entries at/after that time.'
+        ),
+    )
 
     @field_validator("timeframe")
     @classmethod

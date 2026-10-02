@@ -38,11 +38,6 @@ const STRIKE_STEPS: Record<string, number> = {
 const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1d"] as const;
 const CANDLE_FIELDS = ["Equity", "Futures", "Index"];
 const CHART_TYPES = ["Candle", "Line"];
-const SEGMENTS = [
-  { key: "weekly_monthly" as const, label: "Weekly & Monthly Expiries", sub: "NIFTY | SENSEX" },
-  { key: "stocks" as const, label: "Stocks - Cash / F&O", sub: "ALL NIFTY 500 STOCKS" },
-  { key: "crypto" as const, label: "Crypto", sub: "Delta Exchange & CoinSwitch" },
-];
 const TRADE_TYPES = [
   { value: "intraday" as const, label: "Intraday" },
   { value: "intraday_same_day" as const, label: "Same-Day Square-off" },
@@ -229,7 +224,6 @@ export default function TechnicalBuilderPage() {
   const [endDate, setEndDate] = useState(() => isoDaysFromNow(0));
 
   /* instrument + candle */
-  const [segment, setSegment] = useState<"weekly_monthly" | "stocks" | "crypto">("weekly_monthly");
   const [symbol, setSymbol] = useState("NIFTY");
   const [exchange, setExchange] = useState("NSE");
   const [underlyingSource, setUnderlyingSource] = useState<"cash" | "futures">("cash");
@@ -286,8 +280,6 @@ export default function TechnicalBuilderPage() {
     if (def.instrument) {
       setSymbol(def.instrument.symbol ?? "NIFTY");
       setExchange(def.instrument.exchange ?? "NSE");
-      if (def.instrument.segment === "cash") setSegment("stocks");
-      else if (symbol.toUpperCase() === "BTCINR" || symbol.toUpperCase() === "ETHINR") setSegment("crypto");
     }
     if (def.timeframe) setCandleInterval(def.timeframe as typeof TIMEFRAMES[number]);
     if (def.indicators) setIndicators(def.indicators);
@@ -363,7 +355,6 @@ export default function TechnicalBuilderPage() {
       if (editId !== null) setEditingId(editId);
       if (def) applyDefinition(def);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* market data: option chain + lot sizes (only meaningful in legs mode) */
@@ -414,7 +405,7 @@ export default function TechnicalBuilderPage() {
   /* ------------------------------------------------------------------ */
 
   const definition = useMemo<StrategyDefinitionV1>(() => {
-    const instrumentSegment = segment === "stocks" ? "cash" : segment === "crypto" ? "crypto" : "index";
+    const instrumentSegment = "index";
     const legOut: OptionLeg[] = legs.map((l) => {
       const sl = slConfig(l, txSlPts, txSlPct);
       const tp = targetConfig(l, txTpPts, txTpPct);
@@ -505,7 +496,7 @@ export default function TechnicalBuilderPage() {
       },
     };
   }, [
-    segment, legs, hasLegs, txSlPts, txSlPct, txTpPts, txTpPct, featReentry, featReexecute,
+    legs, hasLegs, txSlPts, txSlPct, txTpPts, txTpPct, featReentry, featReexecute,
     dailySl, dailyTp, candleInterval, symbol, exchange, indicators, cases, tradeType,
     maxTxns, underlyingSource, tradeFrom, tradeTo, featTrailing, trailingPct,
   ]);
@@ -804,20 +795,11 @@ export default function TechnicalBuilderPage() {
           </div>
           <label className="block text-xs font-medium text-slate-500">
             Underlying / Symbol
-            {segment === "stocks" ? (
-              <input
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                placeholder="RELIANCE"
-                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800"
-              />
-            ) : (
-              <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
-                {(segment === "crypto" ? ["BTCINR", "ETHINR"] : UNDERLYINGS).map((u) => (
-                  <option key={u}>{u}</option>
-                ))}
-              </select>
-            )}
+            <select value={symbol} onChange={(e) => setSymbol(e.target.value)} className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-800">
+              {UNDERLYINGS.map((u) => (
+                <option key={u}>{u}</option>
+              ))}
+            </select>
           </label>
           {hasLegs && (chain || spot) && (
             <p className="mt-2 text-[11px] text-slate-400 tabular-nums">
@@ -970,18 +952,6 @@ export default function TechnicalBuilderPage() {
           </div>
         }
       >
-        <div className="mb-3 flex gap-0 border-b border-slate-200">
-          {SEGMENTS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setSegment(tab.key)}
-              className={`flex-1 px-3 py-2 text-center text-xs font-medium transition-colors ${segment === tab.key ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-500 hover:text-slate-700"}`}
-            >
-              {tab.label}
-              <span className="block text-[10px] text-slate-400">{tab.sub}</span>
-            </button>
-          ))}
-        </div>
         <p className="mb-3 text-[11px] text-slate-400">
           Add legs to trade options. With no legs the strategy is driven purely by the case conditions (technical mode).
         </p>

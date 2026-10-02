@@ -634,3 +634,119 @@ Deliver a public-facing landing page with a top nav that mirrors AlgoTest's menu
 
 Open question for the user — pick the next milestone once Milestone A is merged. The default recommendation is **Milestone B** (one-click deploy + Signals AI) because both are high-impact and short — they make existing backtests dramatically more useful.
 
+
+---
+
+# Part 7: Competitive re-audit (October 2026)
+
+Re-checked AlgoTest.in, QuantMan.trade and Riser One after their latest updates.
+This section supersedes the gap list above where they conflict.
+
+## P0 - Bugs in code we already shipped
+
+These are not missing features. These are defects in features already marked shipped.
+
+### B1. "Next Weekly" and "Next Monthly" expiry are silently broken
+
+The Leg Builder offers four expiry choices but only two of them work.
+
+- pps/web/src/app/builder/legs/page.tsx:24 declares
+  "weekly" | "next_weekly" | "monthly" | "next_monthly"
+- legs/page.tsx:436,452 emit expiry_formula: l.expiryType.toUpperCase()
+  which produces NEXT_WEEKLY / NEXT_MONTHLY
+- pps/api/app/quant/options/expiry.py:145-161 only recognises
+  THIS_WEEK | WEEKLY | NEXT_WEEK | THIS_MONTH | MONTHLY | NEXT_MONTH
+- expiry.py:163-168 catches the unknown string, fails strptime, and
+  **falls through to get_weekly_expiry(ref)**
+
+Net effect: **Next Weekly silently resolves to the current weekly expiry, and
+Next Monthly silently resolves to the current *weekly* expiry.** No error, no
+warning. The user picks a next-month contract and trades the front month.
+
+pps/web/src/app/builder/technical/page.tsx:436 emits the same bad tokens.
+
+Fix: add NEXT_WEEKLY -> NEXT_WEEK and NEXT_MONTHLY -> NEXT_MONTH aliases in
+parse_expiry_formula, and make the unknown-token branch raise instead of
+silently defaulting.
+
+### B2. sl_mode: "delta" is a no-op
+
+pps/api/app/quant/schema.py:203 allows delta, and
+pps/web/src/app/builder/legs/page.tsx:154 offers "Delta (pts)" in the UI.
+But _compute_sl_target (pps/api/app/backtest/options_engine.py:135-152)
+has branches only for pts, %, underlying_pts, underlying_pct.
+Selecting delta produces **no stop loss at all**, silently.
+
+The underlying conversion next to it is also crude:
+sl = entry_price - u_move * 0.5 (:143, :152) is a flat 0.5 pass-through,
+not a delta mapping.
+
+### B3. eentry_time_restriction is declared and never read
+
+schema.py:309 declares Literal["none","after_time","before_time"]. No engine
+reads it. 	echnical/page.tsx:493 hardcodes "none". The working equivalent is
+	ime_control.no_reentry_after, which *is* implemented.
+
+Either wire it up or delete it so it stops implying a capability we lack.
+
+### B4. uto_roll is declared and never read
+
+pps/api/app/backtest/options_engine.py:129 declares it. Nothing consumes it.
+
+### B5. Leg Builder "Stocks" and "Crypto" tabs are dead UI
+
+legs/page.tsx:274 holds segment state, referenced only at :542 (tab
+highlight) and :654 (label). The underlying <select> at :551-553 renders
+unconditionally from the hardcoded index list at :16. The copy at :538
+advertises "ALL NIFTY 500 STOCKS" with no instrument list, no stock option chain,
+and no stock margin table behind it. Crypto is worse: a segment: "crypto"
+dropdown in 	echnical/page.tsx:44 with **zero backend support**.
+
+### B6. Options engine prices every leg with one time-to-expiry
+
+options_engine.py:380,413 compute a single global
+T = max((n - i) / (252 * (375/5)), 1/375) for the whole run and reuse it for
+every leg. A near leg and a far leg in a calendar spread are priced identically.
+_leg_expiry (:182-197) resolves dates per leg, but only as an
+entry/exit *gate*, never as a pricing input, and there is no "close this leg on
+its own expiry" rule.
+
+## P1 - Real gaps confirmed against the competitors
+
+| Gap | Competitor | Notes |
+|---|---|---|
+| Scenario Analysis (IV offset / Spot / DTE what-if on a strategy) | AlgoTest | We have single-point payoff inputs in the Payoff Lab, no strategy-level scenario model |
+| Public Signals API for external devs | AlgoTest | No API-key auth scheme exists at all; only OAuth2 bearer, and AUTH_ENABLED defaults false |
+| Stock options (single-stock, e.g. Reliance, NIFTY500) | AlgoTest | We are index-only. MIDCPNIFTY and BANKEX *are* supported |
+| India VIX | AlgoTest | Zero occurrences of VIX in the repo |
+| Crypto | AlgoTest, OpenAlgo | Frontend dropdown only, no backend |
+| Day-of-week filters / skip zero-DTE | AlgoTest | No weekday field anywhere in the schema |
+| Combined-premium **signal generation** | AlgoTest | We chart a basket; AlgoTest runs indicators *on* the combined premium and trades it |
+| Round Strikes (ATM/ITM/OTM reference + interval) | AlgoTest | Our strike_multiplier rounds the strike; theirs rounds from a reference strike with a chosen interval |
+| 30 OTM strikes | AlgoTest | Leg builder caps at OTM11; technical builder at OTM5. Both are fixed dropdowns, not free input |
+| Multi-instrument mode (6 monitored / 3 traded, grouped) | QuantMan | instrument is a single object with extra="forbid" |
+| Signals on option / synthetic-futures charts | AlgoTest | We generate signals on spot only |
+| Bulk "Update Lot" across all legs | QuantMan | Per-leg selects only |
+| Signals marketplace (subscribe to others' signals) | AlgoTest | Not present |
+| 50+ broker integrations | AlgoTest, OpenAlgo | We have 7 |
+| Trading challenges / contests | Riser One | Has a Challenge page in nav |
+| Public API docs site | AlgoTest | /docs is still a ComingSoon stub |
+
+## P2 - Parity we already have (confirmed)
+
+Strike Multiplier, Options Basket, combined backtest results, spike protection,
+move-to-cost, daily SL/target, 90+ vs 19 indicators (they lead), 10k-path Monte
+Carlo, TradingView/Chartink webhooks, pre-trade risk guard, paper trading,
+strategy templates, multi-leg options, synthetic-future strike selection,
+straddle-width and ATM-premium strike selection.
+
+## Revised priority
+
+1. **B1** expiry bug - user-visible wrong contract, in our flagship feature
+2. **B2 / B3 / B4** silent no-op fields - cheap to fix, actively misleading
+3. **B5** dead Stocks/Crypto UI - remove the claim until it is real
+4. Scenario Analysis - highest-value new feature, directly matches AlgoTest
+5. Public Signals API + docs site
+6. Stock options
+7. Multi-instrument mode (large)
+8. Day-of-week filters (small, high value)

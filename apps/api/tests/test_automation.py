@@ -1,5 +1,7 @@
 """Tests for the automation loop (/automation): signals -> orders."""
 
+from datetime import date, timedelta
+
 import pytest
 
 from app.core.deps import get_provider_instance
@@ -29,10 +31,19 @@ def _definition() -> dict:
 async def _setup(client, headers):
     app.dependency_overrides[get_provider_instance] = lambda: DemoProvider()
     await client.post("/api/v1/data/instruments/sync", headers=headers)
+    # Must stay inside the rolling window run_once() reads (now-30d .. now).
+    # A hardcoded calendar range silently rots into a 400 "No stored candles".
+    end = date.today()
+    start = end - timedelta(days=21)
     r = await client.post(
         "/api/v1/data/history/ingest",
         headers=headers,
-        json={"symbol": "NIFTY", "interval": "5m", "start": "2026-08-03", "end": "2026-08-14"},
+        json={
+            "symbol": "NIFTY",
+            "interval": "5m",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
     )
     assert r.status_code == 200
     s = await client.post(
@@ -65,7 +76,9 @@ async def test_start_stop_and_run_cycle(client, auth_headers):
     assert start.status_code == 200, start.text
     assert start.json()["started"] is True
 
-    run1 = (await client.post(f"{BASE}/{sid}/run-once", headers=auth_headers)).json()
+    resp1 = await client.post(f"{BASE}/{sid}/run-once", headers=auth_headers)
+    assert resp1.status_code == 200, resp1.text
+    run1 = resp1.json()
     assert run1["bars_evaluated"] >= 5
     # Demo data zigzags — either an action fired or no signal on the last bar
     if run1["actions"]:
@@ -88,7 +101,9 @@ async def test_confirm_mode_stages_orders(client, auth_headers):
         json={"strategy_id": sid, "broker": "mock", "mode": "confirm"},
         headers=auth_headers,
     )
-    run = (await client.post(f"{BASE}/{sid}/run-once", headers=auth_headers)).json()
+    resp = await client.post(f"{BASE}/{sid}/run-once", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    run = resp.json()
     # Any routed action must be staged PENDING, not executed
     for a in run["actions"]:
         kind, st, _ = a.split(":", 2)
