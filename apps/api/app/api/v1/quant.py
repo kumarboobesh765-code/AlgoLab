@@ -8,12 +8,133 @@ from pydantic import BaseModel, Field
 from app.core.deps import CurrentUser, DbSession, ProviderDep
 from app.marketdata.base import ProviderError
 from app.quant.engine import count_signals, evaluate_definition
-from app.quant.indicators import INDICATORS
+from app.quant.indicators import INDICATORS, IndicatorError, compute_indicator
 from app.quant.schema import TIMEFRAMES, StrategyDefinition, validate_definition
 from app.services.candles import load_candles
 from app.services.ingest import resolve_instrument
 
 router = APIRouter(prefix="/quant", tags=["quant"])
+
+
+def _parse_indicator_token(token: str) -> tuple[str, dict]:
+    """Parse a chart overlay spec like ``SMA:length=20`` or ``RSI:14``.
+
+    Bare ``TYPE`` uses every default. ``TYPE:14`` is shorthand for a single
+    ``length``-style positional param. ``TYPE:k=v,k=v`` is explicit and is the
+    form the UI emits. Returns (type, params).
+    """
+    token = token.strip()
+    if not token:
+        raise IndicatorError("Empty indicator token")
+    head, _, tail = token.partition(":")
+    ind_type = head.strip().upper()
+    spec = INDICATORS.get(ind_type)
+    if spec is None:
+        raise IndicatorError(f"Unknown indicator type: {ind_type!r}")
+    params: dict = {}
+    if not tail.strip():
+        return ind_type, params
+    if "=" in tail:
+        for pair in tail.split(","):
+            key, _, raw = pair.partition("=")
+            key = key.strip()
+            if key not in spec.params:
+                raise IndicatorError(f"{ind_type}: unknown parameter {key!r}")
+            pspec = spec.params[key]
+            try:
+                params[key] = (
+                    int(raw) if pspec.kind == "int"
+                    else float(raw) if pspec.kind == "float"
+                    else raw.strip().strip("'\"")
+                )
+            except ValueError as exc:
+                raise IndicatorError(f"{ind_type}.{key} is not a valid {pspec.kind}") from exc
+        return ind_type, params
+    # positional shorthand: first param only
+    values = [v.strip() for v in tail.split(",") if v.strip()]
+    first = next(iter(spec.params), None)
+    if first is None:
+        raise IndicatorError(f"{ind_type} takes no parameters")
+    pspec = spec.params[first]
+    try:
+        params[first] = (
+            int(values[0]) if pspec.kind == "int"
+            else float(values[0]) if pspec.kind == "float"
+            else values[0]
+        )
+    except ValueError as exc:
+        raise IndicatorError(f"{ind_type}.{first} is not a valid {pspec.kind}") from exc
+    return ind_type, params
+
+
+def _jsonable(values: list[float]) -> list[float | None]:
+    """NaN is not valid JSON; emit null so the client can gap the line."""
+    return [None if v != v else v for v in values]
+
+
+@router.get("/series")
+async def indicator_series(
+    user: CurrentUser,
+    provider: ProviderDep,
+    symbol: str = Query(default="NIFTY"),
+    interval: str = Query(default="5m"),
+    indicators: str = Query(default=""),
+    bars: int = Query(default=500, ge=20, le=2000),
+) -> dict:
+    """Candles plus indicator series, index-aligned, for charting.
+
+    Unlike ``/quant/preview`` (which reports signal counts and the last bar),
+    this returns the full computed series so a chart terminal can draw
+    overlays that line up exactly with the price bars.
+
+    `indicators` is a comma-separated list of ``TYPE`` or ``TYPE:k=v`` specs.
+    """
+    tokens = [t for t in indicators.split(",") if t.strip()]
+    end = datetime.now(UTC)
+    start = end - timedelta(days=60)
+    try:
+        candles = await provider.get_historical_data(symbol, interval, start, end)
+    except ProviderError:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if not candles:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No candles for {symbol} {interval}")
+    candles = candles[-bars:]
+
+    series: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for token in tokens:
+        try:
+            ind_type, params = _parse_indicator_token(token)
+            computed = compute_indicator(ind_type, candles, params)
+        except IndicatorError as exc:
+            errors[token] = str(exc)
+            continue
+        label = token.strip()
+        series[label] = {out: _jsonable(vals) for out, vals in computed.items()}
+
+    return {
+        "symbol": symbol,
+        "timeframe": interval,
+        "provider": provider.name,
+        "is_demo": provider.is_demo,
+        "bars": len(candles),
+        "candles": [
+            {
+                "time": int(c.timestamp.timestamp()),
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume,
+                "oi": c.oi,
+            }
+            for c in candles
+        ],
+        "series": series,
+        "errors": errors,
+    }
 
 
 @router.get("/catalog")

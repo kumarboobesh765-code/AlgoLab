@@ -29,6 +29,8 @@ import type {
   IngestResult,
   QualityReport,
   QuantCatalog,
+  QuantSeriesResponse,
+  ChartCandle,
   ValidationResponse,
   PreviewResponse,
   PayoffResponse,
@@ -682,6 +684,83 @@ function mockCatalog(): QuantCatalog {
   return { timeframes: ["1m", "5m", "15m", "30m", "1h", "1d"], indicators: CATALOG_INDICATORS };
 }
 
+/** Deterministic pseudo-random OHLCV so mock charts are stable across reloads. */
+function mockCandles(bars: number) {
+  const out: ChartCandle[] = [];
+  let price = 22000;
+  const t0 = Math.floor(Date.now() / 1000) - bars * 300;
+  for (let i = 0; i < bars; i++) {
+    const wiggle = Math.sin(i * 0.7) * 60 + Math.cos(i * 0.23) * 40;
+    const close = price + wiggle + i * 0.15;
+    const open = price;
+    out.push({
+      time: t0 + i * 300,
+      open: round(open, 2),
+      high: round(Math.max(open, close) + 12, 2),
+      low: round(Math.min(open, close) - 12, 2),
+      close: round(close, 2),
+      volume: 1000 + ((i * 37) % 900) + Math.abs(wiggle) * 4,
+      oi: 10000 + i,
+    });
+    price = close;
+  }
+  return out;
+}
+
+function mockSeries(
+  symbol: string,
+  interval: string,
+  bars: number,
+  indicators: string,
+): QuantSeriesResponse {
+  const candles = mockCandles(bars);
+  const closes = candles.map((c) => c.close);
+  const series: Record<string, Record<string, (number | null)[]>> = {};
+  const errors: Record<string, string> = {};
+
+  for (const raw of indicators.split(",")) {
+    const token = raw.trim();
+    if (!token) continue;
+    const [type, tail = ""] = token.split(":");
+    const upper = type.toUpperCase();
+    const len = Number((tail.match(/(?:^|,)length=(\d+)/) ?? tail.match(/^(\d+)$/))?.[1] ?? 20);
+    const known = CATALOG_INDICATORS.some((c) => c.type === upper);
+    if (!known || !Number.isFinite(len) || len < 1) {
+      errors[token] = `Unknown indicator type: ${upper}`;
+      continue;
+    }
+    // rolling mean with NaN warm-up, mirroring the backend contract
+    const out: (number | null)[] = closes.map((_, i) => {
+      if (i < len - 1) return null;
+      let sum = 0;
+      for (let j = i - len + 1; j <= i; j++) sum += closes[j];
+      return round(sum / len, 4);
+    });
+    if (upper === "BBANDS" || upper === "DONCHIAN" || upper === "KC") {
+      series[token] = {
+        upper: out.map((v) => (v === null ? null : round(v * 1.01, 4))),
+        middle: out,
+        lower: out.map((v) => (v === null ? null : round(v * 0.99, 4))),
+      };
+    } else if (upper === "MACD" || upper === "PPO") {
+      series[token] = { macd: out, signal: out.map((v) => (v === null ? null : round(v * 0.98, 4))), histogram: out.map((v) => (v === null ? null : round((v ?? 0) * 0.02, 4))) };
+    } else {
+      series[token] = { [CATALOG_INDICATORS.find((c) => c.type === upper)?.outputs[0] ?? "value"]: out };
+    }
+  }
+
+  return {
+    symbol,
+    timeframe: interval,
+    provider: "mock",
+    is_demo: true,
+    bars: candles.length,
+    candles,
+    series,
+    errors,
+  };
+}
+
 function mockValidate(): ValidationResponse {
   return { valid: true, errors: [], warnings: ["No historical data ingested for this symbol in mock mode."] };
 }
@@ -1333,6 +1412,10 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
   if (pathOnly === "/quant/catalog" && method === "GET") return ok(mockCatalog());
   if (pathOnly === "/quant/validate" && method === "POST") return ok(mockValidate());
   if (pathOnly === "/quant/preview" && method === "POST") return ok(mockPreview());
+  if (pathOnly === "/quant/series" && method === "GET") {
+    return ok(mockSeries(params.get("symbol") ?? "NIFTY", params.get("interval") ?? "5m",
+      Number(params.get("bars") ?? 500), params.get("indicators") ?? ""));
+  }
 
   // ai
   if (pathOnly === "/ai/draft-strategy" && method === "POST") {

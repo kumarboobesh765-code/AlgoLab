@@ -122,10 +122,12 @@ export const NAV_SECTIONS: NavSection[] = [
     blurb: "Charts, Greeks, market data, and the dashboard",
     pinned: [
       { label: "Dashboard", href: "/", icon: "dashboard" },
+      { label: "Chart Terminal", href: "/chart", icon: "chart" },
       { label: "Payoff Lab", href: "/tools/payoff-lab", icon: "payoff" },
     ],
     items: [
       { label: "Dashboard", href: "/", description: "Overview of strategies, P&L, alerts", icon: "dashboard" },
+      { label: "Chart Terminal", href: "/chart", description: "Candlesticks, volume, multi-pane indicators", icon: "chart" },
       { label: "Analytics", href: "/analytics", description: "Monthly returns, drawdown, win rate over time", icon: "analytics" },
       { label: "Market Scanner", href: "/scanner", description: "Intraday OI / volume / IV scans", icon: "scanner" },
       { label: "Option Chain", href: "/tools/option-chain", description: "Live chain with OI, greeks, max pain", icon: "chain" },

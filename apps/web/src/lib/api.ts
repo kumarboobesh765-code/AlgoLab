@@ -292,6 +292,32 @@ export interface QuantCatalog {
   indicators: IndicatorCatalogEntry[];
 }
 
+/** One OHLCV bar from `GET /quant/series`, shaped for lightweight-charts. */
+export interface ChartCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  oi?: number | null;
+}
+
+/**
+ * `GET /quant/series`. Indicator series are index-aligned with `candles`;
+ * `null` marks a warm-up gap (the API emits null rather than JSON-invalid NaN).
+ */
+export interface QuantSeriesResponse {
+  symbol: string;
+  timeframe: string;
+  provider: string;
+  is_demo: boolean;
+  bars: number;
+  candles: ChartCandle[];
+  series: Record<string, Record<string, (number | null)[]>>;
+  errors: Record<string, string>;
+}
+
 export interface ValidationResponse {
   valid: boolean;
   errors: string[];
