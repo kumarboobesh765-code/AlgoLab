@@ -44,6 +44,7 @@ import type {
   WebhookEndpointCreatedOut,
   WebhookDeliveryLog,
   BasketPayoffResponse,
+  ScenarioResponse,
 } from "./api";
 
 // ---------------------------------------------------------------------------
@@ -956,6 +957,28 @@ function mockBasketPayoff(body: Record<string, unknown>): BasketPayoffResponse {
   };
 }
 
+function mockBasketScenario(body: Record<string, unknown>): ScenarioResponse {
+  type Sc = { name: string; spot_offset_pct: number; iv_offset_pts: number; dte_offset_days: number };
+  const scenarios = (body.scenarios as Sc[]) ?? [];
+  const baseIv = Number(body.volatility ?? 16);
+  const baseRaw = mockBasketPayoff({ ...body, scenarios: undefined });
+  const base = { ...baseRaw, name: "Base", volatility: baseIv };
+  const results = scenarios.map((sc) => {
+    const spot = round(Number(body.spot) * (1 + (sc.spot_offset_pct ?? 0) / 100), 2);
+    const iv = round(Math.max(0.1, baseIv + (sc.iv_offset_pts ?? 0)), 2);
+    const dte = Math.max(0, Number(body.days_to_expiry ?? 7) + (sc.dte_offset_days ?? 0));
+    const subRaw = mockBasketPayoff({
+      ...body,
+      spot,
+      volatility: iv,
+      days_to_expiry: dte,
+      scenarios: undefined,
+    });
+    return { ...subRaw, name: sc.name, volatility: iv };
+  });
+  return { base, scenarios: results };
+}
+
 // ---------------------------------------------------------------------------
 // in-memory stores (session lifetime)
 // ---------------------------------------------------------------------------
@@ -1304,6 +1327,7 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
 
   // options basket (Milestone F)
   if (pathOnly === "/basket/payoff" && method === "POST") return ok(mockBasketPayoff(JSON.parse((init.body as string) ?? "{}")));
+  if (pathOnly === "/basket/scenario" && method === "POST") return ok(mockBasketScenario(JSON.parse((init.body as string) ?? "{}")));
 
   // quant
   if (pathOnly === "/quant/catalog" && method === "GET") return ok(mockCatalog());

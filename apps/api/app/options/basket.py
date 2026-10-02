@@ -6,7 +6,14 @@ and expiry intrinsic value curves.
 
 
 from app.options.greeks import bs_delta, bs_gamma, bs_price, bs_theta, bs_vega
-from app.schemas.basket import BasketPayoffPoint, BasketPayoffRequest, BasketPayoffResponse
+from app.schemas.basket import (
+    BasketPayoffPoint,
+    BasketPayoffRequest,
+    BasketPayoffResponse,
+    ScenarioRequest,
+    ScenarioResponse,
+    ScenarioResult,
+)
 
 
 def _round_to_nearest(value: float, step: float) -> float:
@@ -168,3 +175,57 @@ def compute_basket_payoff(request: BasketPayoffRequest) -> BasketPayoffResponse:
         combined_theta=round(combined_theta, 4),
         combined_vega=round(combined_vega, 4),
     )
+
+
+# ---------------------------------------------------------------------------
+# Scenario Analysis
+# ---------------------------------------------------------------------------
+
+def _to_scenario_result(name: str, request: BasketPayoffRequest) -> ScenarioResult:
+    resp = compute_basket_payoff(request)
+    return ScenarioResult(
+        name=name,
+        spot=resp.spot,
+        days_to_expiry=resp.days_to_expiry,
+        volatility=request.volatility,
+        net_premium=resp.net_premium,
+        combined_delta=resp.combined_delta,
+        combined_gamma=resp.combined_gamma,
+        combined_theta=resp.combined_theta,
+        combined_vega=resp.combined_vega,
+        breakeven_points=resp.breakeven_points,
+        max_profit=resp.max_profit,
+        max_loss=resp.max_loss,
+        payoff=resp.payoff,
+    )
+
+
+def compute_scenarios(request: ScenarioRequest) -> ScenarioResponse:
+    """Reprice the basket under the base inputs and each what-if scenario.
+
+    Each scenario nudges Spot (pct), IV (points) and/or DTE (days) relative to
+    the base, so a trader can compare e.g. "down 5%", "IV +10", "expiry in 2
+    days" side by side. Inputs are clamped to sane ranges after applying offsets.
+    """
+    base_req = BasketPayoffRequest(
+        spot=request.spot,
+        legs=request.legs,
+        days_to_expiry=request.days_to_expiry,
+        volatility=request.volatility,
+    )
+    base = _to_scenario_result("Base", base_req)
+
+    results: list[ScenarioResult] = []
+    for sc in request.scenarios:
+        spot = round(request.spot * (1.0 + sc.spot_offset_pct / 100.0), 2)
+        iv = round(max(0.1, request.volatility + sc.iv_offset_pts), 2)
+        dte = max(0, request.days_to_expiry + sc.dte_offset_days)
+        sub = BasketPayoffRequest(
+            spot=spot,
+            legs=request.legs,
+            days_to_expiry=dte,
+            volatility=iv,
+        )
+        results.append(_to_scenario_result(sc.name, sub))
+
+    return ScenarioResponse(base=base, scenarios=results)

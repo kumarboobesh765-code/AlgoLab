@@ -743,6 +743,15 @@ export interface BasketLegInput {
   quantity?: number;
 }
 
+export interface BasketLeg {
+  id: number;
+  action: "buy" | "sell";
+  option_type: "CE" | "PE";
+  strike: number;
+  premium: number;
+  quantity: number;
+}
+
 export interface BasketPayoffPoint {
   underlying: number;
   current_value: number;
@@ -762,6 +771,44 @@ export interface BasketPayoffResponse {
   combined_gamma: number;
   combined_theta: number;
   combined_vega: number;
+}
+
+// Scenario Analysis (what-if on Spot / IV / DTE)
+
+export interface ScenarioInput {
+  name: string;
+  spot_offset_pct: number;
+  iv_offset_pts: number;
+  dte_offset_days: number;
+}
+
+export interface ScenarioRequest {
+  spot: number;
+  legs: { action: "buy" | "sell"; option_type: "CE" | "PE"; strike: number; premium: number; quantity?: number }[];
+  days_to_expiry: number;
+  volatility: number;
+  scenarios: ScenarioInput[];
+}
+
+export interface ScenarioResult {
+  name: string;
+  spot: number;
+  days_to_expiry: number;
+  volatility: number;
+  net_premium: number;
+  combined_delta: number;
+  combined_gamma: number;
+  combined_theta: number;
+  combined_vega: number;
+  breakeven_points: number[];
+  max_profit: number | null;
+  max_loss: number | null;
+  payoff: BasketPayoffPoint[];
+}
+
+export interface ScenarioResponse {
+  base: ScenarioResult;
+  scenarios: ScenarioResult[];
 }
 
 // ---- options analytics ----

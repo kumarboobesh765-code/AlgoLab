@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { PayoffChart, inr, fmt } from "@/components/charts/PayoffChart";
+import { ScenarioAnalysis } from "@/components/reports/ScenarioAnalysis";
 
 interface BasketLeg {
   id: number;
@@ -23,7 +24,6 @@ interface BasketLeg {
   premium: number;
   quantity: number;
 }
-
 interface MarginEstimate {
   lot_size: number;
   spot_used: number;
@@ -99,7 +99,7 @@ export default function PayoffLabPage() {
   const [margin, setMargin] = useState<MarginEstimate | null>(null);
   const [marginBusy, setMarginBusy] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<"legs" | "basket">("legs");
+  const [activeTab, setActiveTab] = useState<"legs" | "basket" | "scenario">("legs");
   const [basketSpot, setBasketSpot] = useState(23860);
   const [basketDte, setBasketDte] = useState(7);
   const [basketVol, setBasketVol] = useState(16);
@@ -288,6 +288,14 @@ export default function PayoffLabPage() {
         >
           Basket Payoff
         </button>
+        <button
+          onClick={() => setActiveTab("scenario")}
+          className={`px-4 py-2 text-xs font-semibold transition-colors ${
+            activeTab === "scenario" ? "border-b-2 border-blue-600 text-blue-600" : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          Scenario Analysis
+        </button>
       </div>
 
       {activeTab === "legs" && (
@@ -311,6 +319,15 @@ export default function PayoffLabPage() {
           vol={basketVol} setVol={setBasketVol}
           legs={basketLegs} patchLeg={patchBasketLeg} removeLeg={removeBasketLeg} addLeg={addBasketLeg}
           result={basketResult} busy={basketBusy} error={basketError} analyze={analyzeBasket}
+        />
+      )}
+
+      {activeTab === "scenario" && (
+        <ScenarioAnalysis
+          spot={basketSpot}
+          dte={basketDte}
+          vol={basketVol}
+          legs={basketLegs}
         />
       )}
     </div>
