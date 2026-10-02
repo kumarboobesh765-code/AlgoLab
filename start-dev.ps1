@@ -5,6 +5,7 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $apiDir = Join-Path $root "apps\api"
+$webDir = Join-Path $root "apps\web"
 $logDir = Join-Path $env:TEMP "opencode"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -12,30 +13,52 @@ function Test-PortUp([int]$Port) {
     return (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) -ne $null
 }
 
+# NOTE: the parameter is named $Arguments, NOT $Args. $Args is a reserved
+# automatic variable in PowerShell and binding a [string[]] to it silently
+# produced a null collection on PS 5.1, which made Start-Process throw
+# "Cannot validate argument on parameter 'ArgumentList'".
 function Start-Server {
-    param([string]$Name, [int]$Port, [string]$Exe, [string[]]$Args, [string]$WorkDir)
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][int]$Port,
+        [Parameter(Mandatory)][string]$Exe,
+        [string[]]$Arguments,
+        [Parameter(Mandatory)][string]$WorkDir
+    )
     if (Test-PortUp $Port) {
         Write-Host "$Name already running on port $Port" -ForegroundColor DarkGray
         return
     }
     $out = Join-Path $logDir "$Name.out.log"
     $err = Join-Path $logDir "$Name.err.log"
-    Start-Process -FilePath $Exe -ArgumentList $Args -WorkingDirectory $WorkDir `
-        -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err | Out-Null
+
+    $launchParams = @{
+        FilePath = $Exe
+        WorkingDirectory = $WorkDir
+        WindowStyle = 'Hidden'
+        RedirectStandardOutput = $out
+        RedirectStandardError = $err
+    }
+    if ($null -ne $Arguments -and $Arguments.Count -gt 0) {
+        $launchParams.ArgumentList = $Arguments
+    }
+
+    Start-Process @launchParams | Out-Null
     Write-Host "$Name starting on port $Port (logs: $out)" -ForegroundColor Cyan
 }
 
 # 1. API - FastAPI + demo market-data provider (all mock candles), Neon Postgres
+$pythonExe = Join-Path $apiDir ".venv\Scripts\python.exe"
 Start-Server -Name "strategylab-api" -Port 8000 `
-    -Exe (Join-Path $apiDir ".venv\Scripts\python.exe") `
-    -Args @("-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000") `
+    -Exe $pythonExe `
+    -Arguments @("-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000") `
     -WorkDir $apiDir
 
 # 2. Web - Next.js dev server
 Start-Server -Name "strategylab-web" -Port 3000 `
     -Exe "cmd.exe" `
-    -Args @("/c","npm","run","dev") `
-    -WorkDir (Join-Path $root "apps\web")
+    -Arguments @("/c","npm","run","dev") `
+    -WorkDir $webDir
 
 # 3. Wait for readiness (API cold start incl. first cloud-DB hit can take ~15s)
 $deadline = (Get-Date).AddSeconds(45)

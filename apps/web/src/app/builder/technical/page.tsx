@@ -50,11 +50,17 @@ const EXPIRIES = [
   { value: "MONTHLY", label: "Monthly" },
   { value: "NEXT_MONTHLY", label: "Next Monthly" },
 ];
+// 30 OTM + 30 ITM + ATM, matching AlgoTest's strike-type selection range.
 const STRIKE_OFFSETS = [
-  { value: -5, label: "ITM5" }, { value: -4, label: "ITM4" }, { value: -3, label: "ITM3" },
-  { value: -2, label: "ITM2" }, { value: -1, label: "ITM1" }, { value: 0, label: "ATM" },
-  { value: 1, label: "OTM1" }, { value: 2, label: "OTM2" }, { value: 3, label: "OTM3" },
-  { value: 4, label: "OTM4" }, { value: 5, label: "OTM5" },
+  ...Array.from({ length: 30 }, (_, i) => {
+    const n = 30 - i;
+    return { value: -n, label: `ITM${n}` };
+  }),
+  { value: 0, label: "ATM" },
+  ...Array.from({ length: 30 }, (_, i) => {
+    const n = i + 1;
+    return { value: n, label: `OTM${n}` };
+  }),
 ];
 const ADJUSTMENTS = [
   { value: "none", label: "Off" },

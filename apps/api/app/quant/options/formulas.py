@@ -13,14 +13,24 @@ from typing import Literal
 
 
 class ExpiryType(StrEnum):
-    """Expiry selection formulas."""
+    """Expiry selection formulas.
+
+    The web builders are the source of truth and emit the *-LY suffixed
+    spellings (``NEXT_WEEKLY``, ``NEXT_MONTHLY``). Both the short and the
+    *-LY spellings are accepted everywhere and resolve identically; the short
+    forms remain for backward compatibility with saved strategies.
+    """
 
     THIS_WEEK = "THIS_WEEK"
-    NEXT_WEEK = "NEXT_WEEK"
-    THIS_MONTH = "THIS_MONTH"
-    NEXT_MONTH = "NEXT_MONTH"
+    CURRENT_WEEK = "CURRENT_WEEK"
     WEEKLY = "WEEKLY"
+    NEXT_WEEK = "NEXT_WEEK"
+    NEXT_WEEKLY = "NEXT_WEEKLY"
+    THIS_MONTH = "THIS_MONTH"
+    CURRENT_MONTH = "CURRENT_MONTH"
     MONTHLY = "MONTHLY"
+    NEXT_MONTH = "NEXT_MONTH"
+    NEXT_MONTHLY = "NEXT_MONTHLY"
 
 
 @dataclass(frozen=True)

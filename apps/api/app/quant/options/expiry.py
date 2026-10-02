@@ -168,20 +168,20 @@ def parse_expiry_formula(
 
     formula = EXPIRY_ALIASES.get(formula, formula)
 
-    if formula in ("THIS_WEEK", "WEEKLY"):
+    if formula in ("THIS_WEEK", "CURRENT_WEEK", "WEEKLY"):
         return get_weekly_expiry(ref)
 
-    if formula == "NEXT_WEEK":
+    if formula in ("NEXT_WEEK", "NEXT_WEEKLY"):
         this_week = get_weekly_expiry(ref)
         next_week = this_week + timedelta(days=7)
         while is_market_holiday(next_week):
             next_week = get_next_trading_day(next_week)
         return next_week
 
-    if formula in ("THIS_MONTH", "MONTHLY"):
+    if formula in ("THIS_MONTH", "CURRENT_MONTH", "MONTHLY"):
         return get_monthly_expiry(ref)
 
-    if formula == "NEXT_MONTH":
+    if formula in ("NEXT_MONTH", "NEXT_MONTHLY"):
         next_month = ref.month + 1 if ref.month < 12 else 1
         next_year = ref.year if ref.month < 12 else ref.year + 1
         return get_last_thursday(next_year, next_month)

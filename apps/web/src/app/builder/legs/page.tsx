@@ -176,15 +176,17 @@ const EXPIRY_OPTIONS: { value: ExpiryType; label: string }[] = [
   { value: "next_monthly", label: "Next Monthly" },
 ];
 
+// 30 OTM + 30 ITM + ATM, matching AlgoTest's strike-type selection range.
 const STRIKE_TYPE_OFFSETS = [
-  { value: -11, label: "ITM11" }, { value: -10, label: "ITM10" }, { value: -9, label: "ITM9" },
-  { value: -8, label: "ITM8" }, { value: -7, label: "ITM7" }, { value: -6, label: "ITM6" },
-  { value: -5, label: "ITM5" }, { value: -4, label: "ITM4" }, { value: -3, label: "ITM3" },
-  { value: -2, label: "ITM2" }, { value: -1, label: "ITM1" }, { value: 0, label: "ATM" },
-  { value: 1, label: "OTM1" }, { value: 2, label: "OTM2" }, { value: 3, label: "OTM3" },
-  { value: 4, label: "OTM4" }, { value: 5, label: "OTM5" }, { value: 6, label: "OTM6" },
-  { value: 7, label: "OTM7" }, { value: 8, label: "OTM8" }, { value: 9, label: "OTM9" },
-  { value: 10, label: "OTM10" }, { value: 11, label: "OTM11" },
+  ...Array.from({ length: 30 }, (_, i) => {
+    const n = 30 - i;
+    return { value: -n, label: `ITM${n}` };
+  }),
+  { value: 0, label: "ATM" },
+  ...Array.from({ length: 30 }, (_, i) => {
+    const n = i + 1;
+    return { value: n, label: `OTM${n}` };
+  }),
 ];
 
 interface ResolvedLeg {

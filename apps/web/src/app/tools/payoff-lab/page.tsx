@@ -298,8 +298,8 @@ export default function PayoffLabPage() {
           legs={legs} setLegs={setLegs}
           result={result} mc={mc} paths={paths} setPaths={setPaths}
           busy={busy} mcBusy={mcBusy} error={error} margin={margin} marginBusy={marginBusy}
-          setError={setError} setResult={setResult} setMc={setMc} setMargin={setMargin}
-          requestBody={requestBody} analyze={analyze} runMonteCarlo={runMonteCarlo} calculateMargin={calculateMargin}
+          setResult={setResult} setMc={setMc}
+          analyze={analyze} runMonteCarlo={runMonteCarlo} calculateMargin={calculateMargin}
           applyPreset={applyPreset} patchLeg={patchLeg} removeLeg={removeLeg} presetNames={presetNames} step={step}
         />
       )}
@@ -327,11 +327,8 @@ interface LegsContentProps {
   paths: number; setPaths: (v: number) => void;
   busy: boolean; mcBusy: boolean; error: string | null;
   margin: MarginEstimate | null; marginBusy: boolean;
-  setError: React.Dispatch<React.SetStateAction<string | null>>;
   setResult: React.Dispatch<React.SetStateAction<PayoffResponse | null>>;
   setMc: React.Dispatch<React.SetStateAction<MonteCarloResponse | null>>;
-  setMargin: React.Dispatch<React.SetStateAction<MarginEstimate | null>>;
-  requestBody: () => Record<string, unknown>;
   analyze: () => void; runMonteCarlo: () => void; calculateMargin: () => Promise<void>;
   applyPreset: (name: string) => void;
   patchLeg: (id: number, patch: Partial<Omit<LegState, "id">>) => void;
@@ -339,7 +336,7 @@ interface LegsContentProps {
   presetNames: string[]; step: number;
 }
 
-function LegsContent({ underlying, setUnderlying, UNDERLYINGS, expiries, expiry, setExpiry, dte, setDte, lotSize, legs, setLegs, result, mc, paths, setPaths, busy, mcBusy, error, margin, marginBusy, setError, setResult, setMc, setMargin, requestBody, analyze, runMonteCarlo, calculateMargin, applyPreset, patchLeg, removeLeg, presetNames, step }: LegsContentProps) {
+function LegsContent({ underlying, setUnderlying, UNDERLYINGS, expiries, expiry, setExpiry, dte, setDte, lotSize, legs, setLegs, result, mc, paths, setPaths, busy, mcBusy, error, margin, marginBusy, setResult, setMc, analyze, runMonteCarlo, calculateMargin, applyPreset, patchLeg, removeLeg, presetNames, step }: LegsContentProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
