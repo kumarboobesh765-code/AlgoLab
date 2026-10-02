@@ -570,3 +570,12 @@ def compute_indicator(
     if not candles:
         raise IndicatorError("Cannot compute indicators on an empty candle series")
     return computer(candles, **resolved)
+
+
+# Merge the extended library (advanced MAs, oscillators, channels, volume
+# studies, statistics). Imported last: indicators_ext builds on the helpers
+# above, and merges its specs into INDICATORS plus its kernels into _COMPUTERS.
+from app.quant import indicators_ext as _ext  # noqa: E402
+
+INDICATORS.update(_ext.EXTENDED_SPECS)
+_ext.register_all()
