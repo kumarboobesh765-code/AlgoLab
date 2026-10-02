@@ -6,12 +6,18 @@ All strategy/backtest/paper engines must consume data through
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass(slots=True)
 class Candle:
-    """Normalized OHLCV candle (provider-agnostic)."""
+    """Normalized OHLCV candle (provider-agnostic).
+
+    The trailing fields are optional option context. They stay `None` for
+    index/equity/futures bars, and are populated for option bars so that
+    Black-Scholes indicators (delta/gamma/theta/vega/IV/price) can be computed
+    per bar rather than being unavailable outside a live chain snapshot.
+    """
 
     timestamp: datetime
     instrument_id: str
@@ -21,6 +27,12 @@ class Candle:
     close: float
     volume: float = 0.0
     oi: float | None = None
+    # --- option context (None for non-option segments) ---
+    strike: float | None = None
+    option_type: str | None = None  # "CE" | "PE"
+    expiry: date | None = None
+    underlying_price: float | None = None  # spot for this bar
+    iv: float | None = None  # annualised decimal, e.g. 0.15
 
 
 class ProviderError(Exception):

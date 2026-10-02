@@ -165,38 +165,38 @@ INDICATORS: dict[str, IndicatorSpec] = dict(
         _spec(
             "IV",
             ("iv",),
-            "Implied volatility from option chain (requires option data)",
+            "Implied volatility solved per bar from the option close",
             length=ParamSpec("int", 14, ge=1, le=200),
             source=ParamSpec("str", "close", choices=SOURCES),
         ),
         _spec(
             "OPTION_DELTA",
             ("delta",),
-            "Option delta (requires option chain data)",
+            "Black-Scholes delta (needs option candles with strike + spot)",
             length=ParamSpec("int", 1, ge=1, le=1),
         ),
         _spec(
             "OPTION_GAMMA",
             ("gamma",),
-            "Option gamma (requires option chain data)",
+            "Black-Scholes gamma (needs option candles with strike + spot)",
             length=ParamSpec("int", 1, ge=1, le=1),
         ),
         _spec(
             "OPTION_THETA",
             ("theta",),
-            "Option theta (requires option chain data)",
+            "Black-Scholes theta per day (needs option candles with strike + spot)",
             length=ParamSpec("int", 1, ge=1, le=1),
         ),
         _spec(
             "OPTION_VEGA",
             ("vega",),
-            "Option vega (requires option chain data)",
+            "Black-Scholes vega per vol point (needs option candles with strike + spot)",
             length=ParamSpec("int", 1, ge=1, le=1),
         ),
         _spec(
             "OPTION_PRICE",
             ("price",),
-            "Option theoretical price (Black-Scholes)",
+            "Black-Scholes theoretical price (needs option candles with strike + spot)",
             length=ParamSpec("int", 1, ge=1, le=1),
         ),
     )
@@ -522,41 +522,121 @@ def _compute_roc(candles, length, source):
     return {"roc": out}
 
 
+def _option_year_fraction(candle: Candle) -> float | None:
+    """Calendar years to expiry for an option bar, or None if unknown."""
+    if candle.expiry is None:
+        return None
+    ts = candle.timestamp
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    days = (candle.expiry - ts.date()).days
+    return max(days, 0) / 365.0
+
+
+def _option_greeks(candles: Sequence[Candle]) -> dict[str, list[float]]:
+    """Per-bar Black-Scholes greeks for an option series.
+
+    Bars lacking strike / underlying spot (i.e. non-option candles) yield NaN.
+    Implied vol is solved from the bar close with `implied_vol`; when the close
+    is at or below intrinsic there is no solvable vol, so the bar is skipped.
+    """
+    from app.options.greeks import bs_gamma, bs_price, bs_theta, bs_vega, implied_vol
+
+    n = len(candles)
+    delta = [NAN] * n
+    gamma = [NAN] * n
+    theta = [NAN] * n
+    vega = [NAN] * n
+    iv_out = [NAN] * n
+    price_out = [NAN] * n
+
+    for i, c in enumerate(candles):
+        spot = c.underlying_price
+        if spot is None or spot <= 0 or c.strike is None or c.strike <= 0:
+            continue
+        if c.option_type not in ("CE", "PE"):
+            continue
+        years = _option_year_fraction(c)
+        if years is None:
+            continue
+        kind = "call" if c.option_type == "CE" else "put"
+        sigma = c.iv if (c.iv is not None and c.iv > 0) else implied_vol(
+            c.close, spot, c.strike, years, kind
+        )
+        if sigma is None or sigma <= 0:
+            continue
+        if years <= 0:
+            # expired: greeks collapse to intrinsic-value step functions
+            intrinsic = max(spot - c.strike, 0.0) if kind == "call" else max(c.strike - spot, 0.0)
+            delta[i] = 1.0 if (kind == "call" and spot > c.strike) else (
+                -1.0 if (kind == "put" and spot < c.strike) else 0.0
+            )
+            gamma[i] = 0.0
+            theta[i] = 0.0
+            vega[i] = 0.0
+            price_out[i] = intrinsic
+            continue
+        iv_out[i] = sigma
+        delta[i] = bs_delta_safe(spot, c.strike, years, sigma, kind)
+        gamma[i] = bs_gamma(spot, c.strike, years, sigma)
+        theta[i] = bs_theta(spot, c.strike, years, sigma, kind)
+        vega[i] = bs_vega(spot, c.strike, years, sigma)
+        price_out[i] = bs_price(spot, c.strike, years, sigma, kind)
+    return {
+        "delta": delta,
+        "gamma": gamma,
+        "theta": theta,
+        "vega": vega,
+        "iv": iv_out,
+        "price": price_out,
+    }
+
+
+def bs_delta_safe(
+    spot: float, strike: float, years: float, iv: float, kind: str, rate: float = 0.0
+) -> float:
+    from app.options.greeks import bs_delta
+
+    try:
+        return bs_delta(spot, strike, years, iv, kind, rate)
+    except (ValueError, ZeroDivisionError):
+        return NAN
+
+
 @_computer("IV")
 def _compute_iv(candles, length, source):
-    """Implied volatility - placeholder, requires option chain data.
-    Returns NaN series; actual IV comes from option chain analytics."""
-    return {"iv": [NAN] * len(candles)}
+    """Implied volatility solved per bar from the option close."""
+    return {"iv": _option_greeks(candles)["iv"]}
 
 
 @_computer("OPTION_DELTA")
 def _compute_option_delta(candles, length):
-    """Option delta - placeholder, requires option chain data."""
-    return {"delta": [NAN] * len(candles)}
+    """Black-Scholes delta for an option series."""
+    return {"delta": _option_greeks(candles)["delta"]}
 
 
 @_computer("OPTION_GAMMA")
 def _compute_option_gamma(candles, length):
-    """Option gamma - placeholder, requires option chain data."""
-    return {"gamma": [NAN] * len(candles)}
+    """Black-Scholes gamma for an option series."""
+    return {"gamma": _option_greeks(candles)["gamma"]}
 
 
 @_computer("OPTION_THETA")
 def _compute_option_theta(candles, length):
-    """Option theta - placeholder, requires option chain data."""
-    return {"theta": [NAN] * len(candles)}
+    """Black-Scholes theta (per day) for an option series."""
+    return {"theta": _option_greeks(candles)["theta"]}
 
 
 @_computer("OPTION_VEGA")
 def _compute_option_vega(candles, length):
-    """Option vega - placeholder, requires option chain data."""
-    return {"vega": [NAN] * len(candles)}
+    """Black-Scholes vega (per vol point) for an option series."""
+    return {"vega": _option_greeks(candles)["vega"]}
 
 
 @_computer("OPTION_PRICE")
 def _compute_option_price(candles, length):
-    """Option theoretical price - placeholder, requires option chain data."""
-    return {"price": [NAN] * len(candles)}
+    """Black-Scholes theoretical price for an option series."""
+    return {"price": _option_greeks(candles)["price"]}
 
 
 def compute_indicator(
