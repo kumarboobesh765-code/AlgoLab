@@ -63,12 +63,26 @@ def _require_whitelisted_ip(request: Request) -> None:
 
 
 def _broker_config(broker: str) -> dict:
-    if broker == "zerodha":
-        return {
-            "api_key": os.environ.get("ZERODHA_API_KEY", ""),
-            "access_token": os.environ.get("ZERODHA_ACCESS_TOKEN", ""),
-        }
-    return {}
+    """Build gateway credentials from the environment.
+
+    Every broker needs this. Previously only Zerodha was mapped, so every other
+    adapter - Dhan included - was constructed with an empty dict and sent an
+    empty access-token header no matter what credentials were configured. The
+    keys each gateway reads (client_id, api_key, access_token, session_token,
+    user_email) come from their __init__ signatures.
+    """
+    name = broker.lower()
+    token = os.environ.get(f"{name.upper()}_ACCESS_TOKEN", "")
+    return {
+        # Dhan, Upstox and Angel One identify by client_id; Zerodha/Fyers by api_key.
+        "client_id": os.environ.get(f"{name.upper()}_CLIENT_ID", ""),
+        "api_key": os.environ.get(f"{name.upper()}_API_KEY", ""),
+        "access_token": token,
+        # Zerodha's session_token and 5paisa's session_token both arrive as
+        # ACCESS_TOKEN; the gateways read them under that same key.
+        "session_token": token,
+        "user_email": os.environ.get(f"{name.upper()}_USER_EMAIL", ""),
+    }
 
 
 def _to_order_request(req) -> OrderRequest:
