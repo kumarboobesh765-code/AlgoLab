@@ -579,13 +579,13 @@ Last verified against the codebase, not aspirational.
 | G3 | Monte Carlo Drawdown bootstrap | AlgoTest | ✅ shipped | — | — |
 | G4 | Sensitivity Heatmap visualisation UI | AlgoTest | ✅ shipped (`HeatmapPanel`) | — | — |
 | G5 | Portfolio backtest (run many strategies together) | AlgoTest | ✅ shipped (`/portfolio`) | — | — |
-| G6 | **Portfolio Optimiser** (subset picker by metric) | AlgoTest | ❌ missing | P2 | Medium |
+| G6 | **Portfolio Optimiser** (subset picker by metric) | AlgoTest | ✅ shipped (API + `/reports` panel) | — | — |
 | G7 | Signals AI — strategy from prompt, auto-backtest | AlgoTest | ✅ shipped (`/ai`) | — | — |
 | G8 | TradingView webhook receiver | AlgoTest + Quantman | ✅ generic receiver, any provider via slug | — | — |
 | G9 | Chartink webhook receiver | AlgoTest | ✅ shipped | — | — |
 | G10 | One-click broker deploy wizard | AlgoTest | ✅ shipped (`/tools/execution`) | — | — |
-| G11 | **Auto Activation / Auto-Start on day** | AlgoTest | ❌ missing | P2 | Small |
-| G12 | **Switch to Manual** disconnect | AlgoTest | ❌ missing | P2 | Small |
+| G11 | **Auto Activation / Auto-Start on day** | AlgoTest | ✅ shipped (per-deployment schedule) | — | — |
+| G12 | **Switch to Manual** disconnect | AlgoTest | ✅ shipped (disarm halts) | — | — |
 | G13 | Free Charts (Straddle/Strangle live) | AlgoTest | ✅ shipped | — | — |
 | G14 | Daily Trades Analysis end-of-day PnL | AlgoTest | ✅ shipped (`/reports/daily-pnl`) | — | — |
 | G15 | **Sample strategy library** page | AlgoTest | ✅ 33 templates at `/builder/templates`, now searchable | — | — |
@@ -597,14 +597,13 @@ Last verified against the codebase, not aspirational.
 | G21 | **Indicator chart terminal** (candles + overlays) | OpenAlgo | ✅ shipped (`/chart`) | — | — |
 | G22 | **MCP server** for AI agents | OpenAlgo | ✅ shipped (8 tools) | — | — |
 | G23 | **Python strategy host** | OpenAlgo | ✅ shipped (sandboxed subprocess) | — | — |
-| G24 | **WebSocket live streaming to UI** | OpenAlgo | ⚠️ demo provider only | P2 | Medium |
+| G24 | **WebSocket live streaming to UI** | OpenAlgo | ⚠️ demo provider only, socket now authenticated | P2 | Medium |
 | G25 | **Broker coverage** (7 of ~35) | OpenAlgo | ❌ 28 brokers missing | P1 | Large, see below |
 
 ### Remaining, in recommended order
 
-1. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
-   once a strategy is actually deployed to a broker.
-2. **G6 — Portfolio optimiser subset picker.**
+Nothing in the feature table is left unbuilt. The outstanding work is the
+"Deferred, with reasons" list below.
 
 ### Notes on items previously believed missing
 
@@ -614,6 +613,14 @@ Last verified against the codebase, not aspirational.
   category filtering, which is what made it look absent; that is now added rather
   than duplicating the page at a second URL.
 - **G2** shipped with both API and UI.
+- **G6** shipped as `POST /portfolio/optimise-subset` plus a panel on `/reports`.
+  It scores subsets on the combined curve and always reports the best single run
+  as a baseline, so a group that fails to beat its own best component is visible
+  as such rather than being presented as a win.
+- **G11 / G12** shipped as a per-deployment schedule on the deployment registry.
+  Disarming halts a running deployment, because leaving it trading after the
+  user asked to take manual control would be the worst reading of "switch to
+  manual".
 
 ### Deferred, with reasons
 
@@ -629,10 +636,9 @@ Last verified against the codebase, not aspirational.
   backtest storage and the UI, and needs a design decision first: one
   definition with N instruments, or a portfolio of definitions.
 - **G24 live streaming breadth.** The WebSocket layer, demo simulator and chart
-  integration are all shipped. Upstox and Zerodha implement `subscribe_ticks` at
-  the gateway level; fanning those out to the UI needs per-broker session and
-  reconnection handling. The WebSocket also accepts unauthenticated
-  subscriptions today, which must be fixed before it carries real money.
+  integration are all shipped, and the socket now requires a valid token on the
+  handshake. Upstox and Zerodha implement `subscribe_ticks` at the gateway level;
+  fanning those out needs per-broker session and reconnection handling.
 
 ---
 
@@ -654,10 +660,12 @@ priorities are the "Missing" table above.
 
 # Part 6: Current priorities
 
-See the "Remaining, in recommended order" list above. In short:
+See the "Remaining" note above — every item in the feature table is built. What
+is left is the deferred list, and each of those needs something outside the code:
 
-1. **G11/G12 Auto-activation and manual-disconnect.**
-2. **G6 Portfolio optimiser subset picker.**
+1. **G25 broker coverage** — 28 brokers, each needing live credentials to verify.
+2. **G17 multi-instrument** — needs a decision on the `StrategyDefinition` shape.
+3. **G24 broker feeds to the WebSocket** — needs per-broker session handling.
 
 Blocked or deferred: G25 broker coverage (needs credentials), G17
 multi-instrument (needs a schema decision), G24 streaming breadth (needs

@@ -12,6 +12,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { Badge, StatusBadge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
+import { SubsetOptimiser } from "@/components/portfolio/SubsetOptimiser";
 
 function fmtMoney(v: number): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
@@ -242,6 +243,10 @@ export default function ReportsPage() {
           </div>
         )}
       </Card>
+
+      {/* Cross-strategy analysis: sits outside the per-strategy report above
+          because it compares several strategies against each other. */}
+      <SubsetOptimiser />
 
       {report && (
         <Card title="Version history" subtitle={`${report.versions.length} version(s)`}>
