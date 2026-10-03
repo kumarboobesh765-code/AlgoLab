@@ -1,5 +1,7 @@
 # StrategyLab
 
+[![CI](https://github.com/kumarboobesh765-code/AlgoLab/actions/workflows/ci.yml/badge.svg)](https://github.com/kumarboobesh765-code/AlgoLab/actions/workflows/ci.yml)
+
 **Build. Backtest. Forward Test. Grow.**
 
 A professional Indian-market algorithmic trading **research platform**.

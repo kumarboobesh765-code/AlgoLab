@@ -81,21 +81,30 @@ class HostResult:
 def _scrubbed_env() -> dict[str, str]:
     """A minimal environment: no database, no broker credentials, no tokens.
 
-    The interpreter still needs PATH and the basics to start at all.
+    The interpreter still needs the platform's basics to start at all. Windows
+    requires SYSTEMROOT for the loader, Linux needs the loader path on some
+    images; both are listed so the host works identically in CI (Linux) and on
+    a developer machine (Windows/macOS).
     """
     keep = {
         "PATH",
+        "HOME",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "PYTHONIOENCODING",
+        "PYTHONHASHSEED",
+        # Windows loader essentials.
         "SYSTEMROOT",
         "WINDIR",
         "COMSPEC",
         "PATHEXT",
-        "TEMP",
-        "TMP",
-        "PYTHONIOENCODING",
-        "PYTHONHASHSEED",
-        "HOME",
-        "LANG",
-        "LC_ALL",
+        # Linux/macOS loader.
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_FALLBACK_LIBRARY_PATH",
     }
     env = {k: v for k, v in os.environ.items() if k in keep}
     env["PYTHONIOENCODING"] = "utf-8"

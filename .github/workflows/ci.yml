@@ -55,5 +55,11 @@ jobs:
       - name: ESLint
         run: npm run lint
 
+      # Separate from lint: ESLint does not type-check, so a bad API contract
+      # passes lint and only fails here. Cheap, and catches response-shape drift
+      # between the backend and the UI before it ships.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Build
         run: npm run build

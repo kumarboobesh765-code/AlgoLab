@@ -565,75 +565,104 @@ Landing, login, strategies, builder/{visual, flow, legs, technical, ai, template
 ## ◐ Partially present
 - Walk-forward — single split only; no rolling/expanding window
 - Multi-symbol scanner — Greeks + IV surface only; no expiry-chain scanner
-- Real-time streaming UI — brokers connected; limited live chart integration
+- Real-time streaming UI — WebSocket + demo feed shipped; broker feeds not yet wired through
 - Portfolio optimization — per-strategy only; no mean-variance/risk-parity
 - Strategy marketplace — Explore page exists; no ratings/payment
 
 ## ✗ Missing (competitor parity gap)
-| # | Feature | Source | Priority | Effort |
-|---|---|---|---|---|
-| G1 | **Compare two strategies side-by-side** with metric overlay | AlgoTest | P1 | Small |
-| G2 | **In/Out-of-Sample split** in backtest report | AlgoTest | P1 | Small |
-| G3 | **Monte Carlo Drawdown** bootstrap | AlgoTest | P2 | Medium |
-| G4 | **Sensitivity Heatmap visualisation UI** for 2D param | AlgoTest | P2 | Small (API done) |
-| G5 | **Portfolio backtest** (run 50 strategies together) | AlgoTest | P1 | Medium |
-| G6 | **Portfolio Optimiser** (subset picker by metric) | AlgoTest | P2 | Medium |
-| G7 | **Signals AI** — build strategy from prompt, auto-backtest | AlgoTest | P1 | Small (reuse /ai + backtest) |
-| G8 | **TradingView webhook receiver** | AlgoTest + Quantman | P1 | Medium |
-| G9 | **Chartink webhook receiver** | AlgoTest | P2 | Small |
-| G10 | **One-click broker deploy wizard** | AlgoTest | P1 | Small |
-| G11 | **Auto Activation / Auto-Start on day** | AlgoTest | P2 | Small |
-| G12 | **Switch to Manual** disconnect | AlgoTest | P2 | Small |
-| G13 | **Free Charts** (Straddle/Strangle live) | AlgoTest | P3 | Small |
-| G14 | **Daily Trades Analysis** end-of-day PnL report | AlgoTest | P2 | Small |
-| G15 | **Sample strategy library** (UI on landing) | AlgoTest | P1 | Small |
-| G16 | **Options Basket** combined-premium chart | Quantman | P3 | Medium |
-| G17 | **Multi-instrument Advanced Mode** (6 monitor / 3 trade) | Quantman | P3 | Large |
-| G18 | **Strike Multiplier** rounding | Quantman | P3 | Small |
-| G19 | **Public landing page** with 9 product cards | Both | **P1 (this milestone)** | Small |
-| G20 | **Mobile-responsive navigation menu** mirroring AlgoTest | AlgoTest | **P1 (this milestone)** | Small |
+Last verified against the codebase, not aspirational.
+
+| # | Feature | Source | Status | Priority | Effort |
+|---|---|---|---|---|---|
+| G1 | Compare two strategies side-by-side with metric overlay | AlgoTest | ✅ shipped (`/compare`) | — | — |
+| G2 | **In/Out-of-Sample split** in backtest report | AlgoTest | ❌ missing | P1 | Small |
+| G3 | Monte Carlo Drawdown bootstrap | AlgoTest | ✅ shipped | — | — |
+| G4 | Sensitivity Heatmap visualisation UI | AlgoTest | ⚠️ API only, no UI | P2 | Small |
+| G5 | Portfolio backtest (run many strategies together) | AlgoTest | ✅ shipped (`/portfolio`) | — | — |
+| G6 | **Portfolio Optimiser** (subset picker by metric) | AlgoTest | ❌ missing | P2 | Medium |
+| G7 | Signals AI — strategy from prompt, auto-backtest | AlgoTest | ✅ shipped (`/ai`) | — | — |
+| G8 | TradingView webhook receiver | AlgoTest + Quantman | ✅ generic receiver, any provider via slug | — | — |
+| G9 | Chartink webhook receiver | AlgoTest | ✅ shipped | — | — |
+| G10 | One-click broker deploy wizard | AlgoTest | ✅ shipped (`/tools/execution`) | — | — |
+| G11 | **Auto Activation / Auto-Start on day** | AlgoTest | ❌ missing | P2 | Small |
+| G12 | **Switch to Manual** disconnect | AlgoTest | ❌ missing | P2 | Small |
+| G13 | Free Charts (Straddle/Strangle live) | AlgoTest | ✅ shipped | — | — |
+| G14 | Daily Trades Analysis end-of-day PnL | AlgoTest | ✅ shipped (`/reports/daily-pnl`) | — | — |
+| G15 | **Sample strategy library** page | AlgoTest | ⚠️ templates exist, no `/library` page | P1 | Small |
+| G16 | Options Basket combined-premium chart | Quantman | ✅ shipped (+ Scenario Analysis) | — | — |
+| G17 | **Multi-instrument Advanced Mode** (6 monitor / 3 trade) | Quantman | ❌ missing | P3 | Large |
+| G18 | Strike Multiplier rounding | Quantman | ✅ shipped | — | — |
+| G19 | Public landing page with product cards | Both | ✅ shipped | — | — |
+| G20 | Mobile-responsive navigation menu | AlgoTest | ✅ shipped | — | — |
+| G21 | **Indicator chart terminal** (candles + overlays) | OpenAlgo | ✅ shipped (`/chart`) | — | — |
+| G22 | **MCP server** for AI agents | OpenAlgo | ✅ shipped (8 tools) | — | — |
+| G23 | **Python strategy host** | OpenAlgo | ✅ shipped (sandboxed subprocess) | — | — |
+| G24 | **WebSocket live streaming to UI** | OpenAlgo | ⚠️ demo provider only | P2 | Medium |
+| G25 | **Broker coverage** (7 of ~35) | OpenAlgo | ❌ 28 brokers missing | P1 | Large, see below |
+
+### Remaining, in recommended order
+
+1. **G2 — In/Out-of-Sample split.** The most misleading report we ship. A strategy
+   that looks profitable purely because it was fitted to the same bars it is
+   scored on currently reads as a win. Splitting the sample is small and removes
+   a real footgun.
+2. **G15 — Sample strategy library page.** Templates exist with no browsable UI.
+3. **G4 — Heatmap UI.** `run_heatmap` and `HeatmapCell` already exist; only the
+   visualisation is missing.
+4. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
+   once a strategy is actually deployed to a broker.
+5. **G6 — Portfolio optimiser subset picker.**
+
+### Deferred, with reasons
+
+- **G25 broker coverage.** 7 brokers are live (Zerodha, Upstox, AngelOne, Dhan,
+  Fyers, ICICI Direct, 5paisa). Every adapter needs its own auth flow, symbol
+  master mapping and product-type/segment quirks, and none can be verified
+  without live credentials. Unverified order-placement code is worse than fewer
+  working brokers, so these are added one at a time with credentials in hand.
+  All 7 are held to a shared contract test (`tests/test_broker_contracts.py`),
+  so a new one is a self-contained drop-in via `register_broker`.
+- **G17 multi-instrument.** Requires changing `StrategyDefinition`, which is
+  single-instrument with `extra="forbid"`. That cascades into both engines,
+  backtest storage and the UI, and needs a design decision first: one
+  definition with N instruments, or a portfolio of definitions.
+- **G24 live streaming breadth.** The WebSocket layer, demo simulator and chart
+  integration are all shipped. Upstox and Zerodha implement `subscribe_ticks` at
+  the gateway level; fanning those out to the UI needs per-broker session and
+  reconnection handling. The WebSocket also accepts unauthenticated
+  subscriptions today, which must be fixed before it carries real money.
 
 ---
 
-# Part 5: Prioritised Build Plan
+# Part 5: Build Plan — historical
 
-## Milestone A — **Public landing + product menu (this PR)** ← CURRENT
-Deliver a public-facing landing page with a top nav that mirrors AlgoTest's menu (Algo Trading, Indicator Algo, ClickTrade, Resources + Tools, Pricing, Partnership). Each product gets a card with description + status (Live / Coming soon) linking to the appropriate route. This makes the platform look like a real product to anyone visiting the home page, and gives the user a single menu to navigate to the work items below.
+Milestones A–F are **complete**. They are kept for provenance; the live
+priorities are the "Missing" table above.
 
-## Milestone B — One-click deploy + Signals AI (1-2 days)
-- G10: One-click "Deploy to live" button on every backtest result
-- G7: Signals AI page (`/builder/signals-ai`) — combines NL draft + auto-backtest + suggested leg config
-- G15: Sample strategy library page (`/library`) on landing
-
-## Milestone C — Compare & Portfolio (2-3 days)
-- G1: Compare two strategies side-by-side (equity overlay + metric table)
-- G2: In/Out-of-Sample split in backtest detail
-- G5: Portfolio backtest (run 50 strategies, combined PnL)
-- G4: Sensitivity heatmap UI (API done)
-
-## Milestone D — Webhook receivers (1-2 days)
-- G8: TradingView webhook receiver (`POST /webhooks/tradingview`) → trigger strategy
-- G9: Chartink webhook receiver (`POST /webhooks/chartink`) → trigger strategy
-- G11: Auto Activation / Auto-Start
-- G12: Switch to Manual disconnect
-
-## Milestone E — Reporting & polish (1-2 days)
-- G3: Monte Carlo Drawdown (bootstrap)
-- G6: Portfolio Optimiser subset picker
-- G14: Daily Trades Analysis end-of-day report
-- G13: Free Charts (Straddle/Strangle) on landing
-
-## Milestone F — Differentiators (3-5 days)
-- G16: Options Basket combined-premium chart
-- G18: Strike Multiplier rounding
-- (G17: Multi-instrument Advanced Mode — large, defer)
+| Milestone | Scope | Outcome |
+|---|---|---|
+| A | Public landing + product menu | shipped |
+| B | One-click deploy + Signals AI | shipped (G10, G7) |
+| C | Compare & Portfolio | shipped (G1, G5); G2/G4 still open |
+| D | Webhook receivers | shipped (G8, G9); G11/G12 still open |
+| E | Reporting & polish | shipped (G3, G13, G14); G6 still open |
+| F | Differentiators | shipped (G16, G18) |
 
 ---
 
-# Part 6: What to do next
+# Part 6: Current priorities
 
-Open question for the user — pick the next milestone once Milestone A is merged. The default recommendation is **Milestone B** (one-click deploy + Signals AI) because both are high-impact and short — they make existing backtests dramatically more useful.
+See the "Remaining, in recommended order" list above. In short:
 
+1. **G2 In/Out-of-Sample split** — removes the most misleading report we ship.
+2. **G15 Sample library page** — templates exist with no browsable UI.
+3. **G4 Heatmap UI** — backend already done.
+4. **G11/G12 Auto-activation and manual-disconnect.**
+5. **G6 Portfolio optimiser subset picker.**
+
+Blocked or deferred: G25 broker coverage (needs credentials), G17
+multi-instrument (needs a schema decision), G24 streaming breadth (needs
+per-broker sessions plus WebSocket auth).
 
 ---
 
