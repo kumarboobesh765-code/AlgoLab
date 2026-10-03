@@ -115,26 +115,39 @@ class DhanGateway(BaseRestBroker):
         return await self._request("GET", "/v2/profile")
 
     async def get_funds(self) -> Funds:
-        # Dhan exposes limits at /v2/fundlimit. /v2/funds does not exist and
-        # answers 404, which used to be parsed as an empty payload and surfaced
-        # as zero available margin instead of an error.
+        # Dhan exposes limits at /v2/fundlimit, which is a flat object - there is
+        # no nested "equity" segment. /v2/funds does not exist and answers 404,
+        # which used to parse as an empty payload and surface as zero margin
+        # instead of an error.
+        #
+        # "availabelBalance" is spelled that way by Dhan; both spellings are
+        # accepted so a future API correction does not silently zero the balance.
         data = await self._request("GET", "/v2/fundlimit")
-        eq = data.get("equity", {})
         return Funds(
-            equity=float(eq.get("availableMargin", 0)),
-            commodity=float(data.get("commodity", {}).get("availableMargin", 0)),
-            used_margin=float(eq.get("utilisedMargin", 0)),
-            available_cash=float(eq.get("availableMargin", 0)),
+            equity=float(data.get("availabelBalance", data.get("availableBalance", 0))),
+            commodity=0.0,
+            used_margin=float(data.get("utilizedAmount", data.get("utilisedAmount", 0))),
+            available_cash=float(data.get("availabelBalance", data.get("availableBalance", 0))),
         )
 
     async def get_margin(self) -> Margin:
         data = await self._request("GET", "/v2/fundlimit")
-        return Margin(equity=data.get("equity", {}), commodity=data.get("commodity", {}))
+        return Margin(
+            equity={
+                "available_margin": data.get("availabelBalance", 0),
+                "used_margin": data.get("utilizedAmount", 0),
+                "collateral": data.get("collateralAmount", 0),
+                "withdrawable": data.get("withdrawableBalance", 0),
+            },
+            commodity={},
+        )
 
     async def get_positions(self) -> list[Position]:
         data = await self._request("GET", "/v2/positions")
+        # An account with no positions returns a bare JSON array, not an object.
+        rows = data if isinstance(data, list) else data.get("positions", [])
         out = []
-        for p in data.get("positions", []):
+        for p in rows:
             qty = int(float(p.get("net_qty", 0)))
             side = OrderSide.BUY if qty >= 0 else OrderSide.SELL
             out.append(Position(
@@ -153,9 +166,18 @@ class DhanGateway(BaseRestBroker):
         return out
 
     async def get_holdings(self) -> list[Holding]:
-        data = await self._request("GET", "/v2/holdings")
+        try:
+            data = await self._request("GET", "/v2/holdings")
+        except OrderRejectedError as exc:
+            # An account with no holdings gets HTTP 500 HOLDING_ERROR, which is
+            # Dhan's way of saying "empty", not a real failure. Surface it as an
+            # empty portfolio instead of an error the user cannot act on.
+            if "DH-1111" in str(exc) or "no holdings" in str(exc).lower():
+                return []
+            raise
+        rows = data if isinstance(data, list) else data.get("holdings", [])
         out = []
-        for h in data.get("holdings", []):
+        for h in rows:
             qty = int(float(h.get("quantity", 0)))
             avg = float(h.get("average_price", 0))
             ltp = float(h.get("last_price", 0))
@@ -174,7 +196,9 @@ class DhanGateway(BaseRestBroker):
 
     async def get_orders(self) -> list[Order]:
         data = await self._request("GET", "/v2/orders")
-        return [self._map_order(o) for o in data.get("data", []) or []]
+        # Empty order book returns a bare array; a populated one returns {"data": [...]}.
+        rows = data if isinstance(data, list) else data.get("data", [])
+        return [self._map_order(o) for o in rows or []]
 
     def _map_order(self, o: dict) -> Order:
         status = _STATUS_MAP.get((o.get("order_status") or "").upper(), OrderStatus.OPEN)
@@ -204,12 +228,22 @@ class DhanGateway(BaseRestBroker):
 
     async def get_order_history(self, order_id: str) -> list[Order]:
         data = await self._request("GET", "/v2/orders")
-        return [self._map_order(o) for o in data.get("data", []) or [] if str(o.get("order_id", "")) == order_id]
+        rows = data if isinstance(data, list) else data.get("data", [])
+        # The comprehension filter must bind to the element. Written as
+        # [... for o in rows if ...] the original version parsed as
+        # [... for o in rows] and then filtered Order objects, which has no
+        # "order_id" attribute.
+        return [
+            self._map_order(o)
+            for o in rows or []
+            if str(o.get("order_id", "")) == order_id
+        ]
 
     async def get_trades(self, from_date=None, to_date=None) -> list[Trade]:
         data = await self._request("GET", "/v2/trades")
+        rows = data if isinstance(data, list) else data.get("data", [])
         out = []
-        for t in data.get("data", []) or []:
+        for t in rows or []:
             out.append(Trade(
                 trade_id=str(t.get("trade_id", "")),
                 order_id=str(t.get("order_id", "")),
