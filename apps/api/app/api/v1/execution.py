@@ -21,6 +21,7 @@ from app.schemas.execution import (
     AlgoParentOut,
     AlgoRegisterOut,
     AlgoRegisterRequest,
+    ArmScheduleRequest,
     AuditOut,
     BracketOrderRequest,
     BracketOut,
@@ -452,26 +453,134 @@ async def deploy_strategy(req: DeployRequest, user: CurrentUser, request: Reques
     )
 
 
+def _deployment_out(d) -> "DeploymentOut":
+    """Serialise a Deployment, including its schedule and runtime state."""
+    return DeploymentOut(
+        deployment_id=d.deployment_id,
+        strategy_id=d.strategy_id,
+        algo_id=d.algo_id,
+        broker=d.broker,
+        mode=d.mode,
+        name=d.name,
+        segment=d.segment,
+        exchange=d.exchange,
+        active=d.active,
+        created_at=d.created_at.isoformat(),
+        auto_start=d.auto_start,
+        start_time=d.start_time,
+        stop_time=d.stop_time,
+        weekdays_only=d.weekdays_only,
+        running=d.running,
+        schedule_summary=d.schedule_summary,
+        last_started_at=d.last_started_at.isoformat() if d.last_started_at else None,
+        last_stopped_at=d.last_stopped_at.isoformat() if d.last_stopped_at else None,
+        stop_reason=d.stop_reason,
+    )
+
+
+@router.post("/deployments/{deployment_id}/arm", response_model=DeploymentOut)
+async def arm_deployment(
+    deployment_id: str,
+    payload: ArmScheduleRequest,
+    user: CurrentUser,
+    request: Request,
+) -> DeploymentOut:
+    """G11: auto-start this deployment inside the given window each day.
+
+    IP-whitelisted like every other state-changing order endpoint: arming a
+    deployment is what causes orders to be placed without a human present.
+    """
+    _require_whitelisted_ip(request)
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    try:
+        dep = reg.arm(
+            deployment_id,
+            start_time=payload.start_time,
+            stop_time=payload.stop_time,
+            weekdays_only=payload.weekdays_only,
+        )
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    mgr = get_order_manager(dep.broker, _broker_config(dep.broker), user=user.email)
+    mgr._log("ARM", f"{dep.deployment_id} auto {dep.start_time}-{dep.stop_time}", dep.algo_id)
+    return _deployment_out(dep)
+
+
+@router.post("/deployments/{deployment_id}/manual", response_model=DeploymentOut)
+async def switch_to_manual(
+    deployment_id: str,
+    user: CurrentUser,
+    request: Request,
+) -> DeploymentOut:
+    """G12: hand this deployment back to manual control.
+
+    Also stops it if it was running, since leaving it live after the user asked
+    to take over would be the worst reading of "switch to manual".
+    """
+    _require_whitelisted_ip(request)
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    try:
+        dep = reg.disarm(deployment_id)
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    mgr = get_order_manager(dep.broker, _broker_config(dep.broker), user=user.email)
+    mgr._log("MANUAL", f"{dep.deployment_id} switched to manual", dep.algo_id)
+    return _deployment_out(dep)
+
+
+@router.post("/deployments/{deployment_id}/start", response_model=DeploymentOut)
+async def start_deployment(
+    deployment_id: str,
+    user: CurrentUser,
+    request: Request,
+) -> DeploymentOut:
+    """Start a deployment immediately, regardless of schedule."""
+    _require_whitelisted_ip(request)
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    try:
+        dep = reg.start(deployment_id, reason="manual")
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _deployment_out(dep)
+
+
+@router.post("/deployments/{deployment_id}/stop", response_model=DeploymentOut)
+async def stop_deployment(
+    deployment_id: str,
+    user: CurrentUser,
+    request: Request,
+) -> DeploymentOut:
+    """Stop a deployment immediately."""
+    _require_whitelisted_ip(request)
+    from app.execution.deploy import get_deployment_registry
+
+    reg = get_deployment_registry()
+    try:
+        dep = reg.stop(deployment_id, reason="manual")
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return _deployment_out(dep)
+
+
 @router.get("/deployments", response_model=list[DeploymentOut])
 async def list_deployments(user: CurrentUser) -> list[DeploymentOut]:
     from app.execution.deploy import get_deployment_registry
 
     reg = get_deployment_registry()
-    return [
-        DeploymentOut(
-            deployment_id=d.deployment_id,
-            strategy_id=d.strategy_id,
-            algo_id=d.algo_id,
-            broker=d.broker,
-            mode=d.mode,
-            name=d.name,
-            segment=d.segment,
-            exchange=d.exchange,
-            active=d.active,
-            created_at=d.created_at.isoformat(),
-        )
-        for d in reg.list_deployments()
-    ]
+    # Advance the clock first so the list reflects what the scheduler would do,
+    # rather than showing a deployment as stopped when its window is open.
+    reg.tick()
+    return [_deployment_out(d) for d in reg.list_deployments()]
 
 
 # ---- confirm-mode (execution gradient: paper -> confirm -> auto) -----------

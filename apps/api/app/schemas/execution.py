@@ -241,6 +241,23 @@ class DeploymentOut(BaseModel):
     exchange: str
     active: bool
     created_at: str
+    auto_start: bool = False
+    start_time: str = "09:15"
+    stop_time: str = "15:30"
+    weekdays_only: bool = True
+    running: bool = False
+    schedule_summary: str = "Manual"
+    last_started_at: str | None = None
+    last_stopped_at: str | None = None
+    stop_reason: str | None = None
+
+
+class ArmScheduleRequest(BaseModel):
+    """G11: enable automatic start/stop for a deployment."""
+
+    start_time: str = Field(default="09:15", pattern=r"^\d{2}:\d{2}$")
+    stop_time: str = Field(default="15:30", pattern=r"^\d{2}:\d{2}$")
+    weekdays_only: bool = True
 
 
 class PendingOrderOut(BaseModel):
