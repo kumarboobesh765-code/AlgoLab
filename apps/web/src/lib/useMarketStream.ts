@@ -114,20 +114,24 @@ const [mockMode] = useState(() => isMockMode());
       };
     }
 
-    const wsUrl = API_URL.replace(/^http/, "ws") + "/api/v1/ws/market";
+    const token = getToken();
+    // Browsers cannot set headers on a WebSocket, so the token goes in the
+    // query string; the server also accepts an Authorization header for
+    // non-browser clients.
+    const wsUrl =
+      API_URL.replace(/^http/, "ws") +
+      "/api/v1/ws/market" +
+      (token ? `?token=${encodeURIComponent(token)}` : "");
     const ws = new WebSocket(wsUrl);
     socketRef.current = ws;
 
-    const token = getToken();
     ws.onopen = () => {
       setState((prev) => ({ ...prev, connected: true, error: null }));
-      // The socket authenticates on subscribe, matching the REST convention.
       ws.send(
         JSON.stringify({
           action: "subscribe",
           symbols: wanted,
           interval,
-          ...(token ? { token } : {}),
         }),
       );
     };

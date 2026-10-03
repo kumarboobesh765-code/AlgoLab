@@ -18,9 +18,12 @@ NotImplementedError and the socket says so once rather than dropping silently.
 import asyncio
 import contextlib
 import json
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.config import get_settings
+from app.core.security import decode_access_token
 from app.marketdata.factory import get_provider
 
 router = APIRouter(tags=["stream"])
@@ -28,6 +31,42 @@ router = APIRouter(tags=["stream"])
 # Bound a single fan-out so one client's flood cannot grow memory unbounded.
 MAX_SYMBOLS = 20
 MAX_QUEUE = 256
+
+
+def _token_from(websocket: WebSocket) -> str | None:
+    """Pull a bearer token from the handshake.
+
+    Browsers cannot set headers on a WebSocket, so the token may arrive either as
+    a query parameter or in the Authorization header (which non-browser clients
+    and the MCP layer do send).
+    """
+    header = websocket.headers.get("authorization") or ""
+    if header.lower().startswith("bearer "):
+        return header[7:].strip()
+    return websocket.query_params.get("token")
+
+
+def _authorised(websocket: WebSocket) -> bool:
+    """Whether this socket may open, matching the REST auth convention.
+
+    When AUTH_ENABLED is false the whole platform runs unauthenticated for local
+    research, and the socket follows that setting rather than inventing a
+    stricter rule the REST API does not enforce. When auth is on, an invalid or
+    missing token closes the socket instead of streaming anonymously.
+    """
+    if not get_settings().AUTH_ENABLED:
+        return True
+    token = _token_from(websocket)
+    if not token:
+        return False
+    subject = decode_access_token(token)
+    if subject is None:
+        return False
+    try:
+        uuid.UUID(subject)
+    except ValueError:
+        return False
+    return True
 
 
 def _tick_payload(tick) -> dict:
@@ -50,6 +89,12 @@ def _tick_payload(tick) -> dict:
 
 @router.websocket("/ws/market")
 async def market_stream(websocket: WebSocket) -> None:
+    # Reject before accept so the handshake fails outright rather than opening a
+    # socket that then silently refuses to send anything.
+    if not _authorised(websocket):
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
+
     await websocket.accept()
     provider = get_provider()
 

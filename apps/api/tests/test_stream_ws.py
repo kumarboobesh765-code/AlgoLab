@@ -6,6 +6,7 @@ the guarantee that a disconnect tears the stream down.
 """
 
 import json
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -28,8 +29,24 @@ def recv_until(ws, wanted: str, limit: int = 40):
 
 @pytest.fixture
 def ws_client():
-    with TestClient(app) as client:
-        yield client
+    # These tests exercise the subscription protocol, not auth. Pin the setting
+    # so they are unaffected by whatever AUTH_ENABLED the local .env carries.
+    # get_settings is lru_cached, so the cache must be dropped for the new env
+    # value to take effect.
+    from app.core.config import get_settings
+
+    previous = os.environ.get("AUTH_ENABLED")
+    os.environ["AUTH_ENABLED"] = "false"
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        if previous is None:
+            os.environ.pop("AUTH_ENABLED", None)
+        else:
+            os.environ["AUTH_ENABLED"] = previous
+        get_settings.cache_clear()
 
 
 def test_hello_frame_advertises_provider(ws_client):
