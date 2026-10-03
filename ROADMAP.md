@@ -575,7 +575,7 @@ Last verified against the codebase, not aspirational.
 | # | Feature | Source | Status | Priority | Effort |
 |---|---|---|---|---|---|
 | G1 | Compare two strategies side-by-side with metric overlay | AlgoTest | ✅ shipped (`/compare`) | — | — |
-| G2 | **In/Out-of-Sample split** in backtest report | AlgoTest | ❌ missing | P1 | Small |
+| G2 | **In/Out-of-Sample split** in backtest report | AlgoTest | ✅ shipped (API + UI panel) | — | — |
 | G3 | Monte Carlo Drawdown bootstrap | AlgoTest | ✅ shipped | — | — |
 | G4 | Sensitivity Heatmap visualisation UI | AlgoTest | ⚠️ API only, no UI | P2 | Small |
 | G5 | Portfolio backtest (run many strategies together) | AlgoTest | ✅ shipped (`/portfolio`) | — | — |
@@ -602,16 +602,17 @@ Last verified against the codebase, not aspirational.
 
 ### Remaining, in recommended order
 
-1. **G2 — In/Out-of-Sample split.** The most misleading report we ship. A strategy
-   that looks profitable purely because it was fitted to the same bars it is
-   scored on currently reads as a win. Splitting the sample is small and removes
-   a real footgun.
-2. **G15 — Sample strategy library page.** Templates exist with no browsable UI.
-3. **G4 — Heatmap UI.** `run_heatmap` and `HeatmapCell` already exist; only the
+1. **G15 — Sample strategy library page.** Templates exist with no browsable UI.
+2. **G4 — Heatmap UI.** `run_heatmap` and `HeatmapCell` already exist; only the
    visualisation is missing.
-4. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
+3. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
    once a strategy is actually deployed to a broker.
-5. **G6 — Portfolio optimiser subset picker.**
+4. **G6 — Portfolio optimiser subset picker.**
+
+### UI work still outstanding for shipped backend features
+
+- **G4** is the same situation: `run_heatmap` and `HeatmapCell` exist, but no
+  visualisation renders them.
 
 ### Deferred, with reasons
 
@@ -654,11 +655,10 @@ priorities are the "Missing" table above.
 
 See the "Remaining, in recommended order" list above. In short:
 
-1. **G2 In/Out-of-Sample split** — removes the most misleading report we ship.
-2. **G15 Sample library page** — templates exist with no browsable UI.
-3. **G4 Heatmap UI** — backend already done.
-4. **G11/G12 Auto-activation and manual-disconnect.**
-5. **G6 Portfolio optimiser subset picker.**
+1. **G15 Sample library page** — templates exist with no browsable UI.
+2. **G4 Heatmap UI** — backend already done.
+3. **G11/G12 Auto-activation and manual-disconnect.**
+4. **G6 Portfolio optimiser subset picker.**
 
 Blocked or deferred: G25 broker coverage (needs credentials), G17
 multi-instrument (needs a schema decision), G24 streaming breadth (needs

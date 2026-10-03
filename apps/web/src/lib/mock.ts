@@ -1299,6 +1299,48 @@ export function mockApi(path: string, init: RequestInit = {}): Promise<MockRespo
     createdBacktests.unshift(run);
     return ok(run);
   }
+  // Must precede the /backtests/{id} patterns below, otherwise "validate"
+  // would be captured as a run id.
+  if (pathOnly === "/backtests/validate" && method === "POST") {
+    const body = JSON.parse((init.body as string) ?? "{}");
+    const split = Number(body.split ?? 0.7);
+    const bars = 900;
+    const splitIndex = Math.floor(bars * split);
+    // Deterministic from the strategy id so the panel is stable across reloads.
+    const seed = hashSeed(String(body.strategy_id ?? "s_ema"));
+    const isRet = round((seed % 18) - 4, 3);
+    const oosRet = round(isRet * (0.35 + ((seed >> 5) % 60) / 100), 3);
+    const oosTrades = 12 + ((seed >> 3) % 40);
+    const win = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 86_400_000).toISOString();
+    return ok({
+      split_index: splitIndex,
+      split_time: win(210),
+      warmup_bars: 20,
+      bars_used: bars,
+      windows: {
+        in_sample: {
+          start: win(0),
+          end: win(210),
+          summary: { return_pct: isRet, net_pnl: Math.round(isRet * 1000), total_trades: Math.round(splitIndex / 12) },
+        },
+        out_of_sample: {
+          start: win(211),
+          end: win(270),
+          summary: { return_pct: oosRet, net_pnl: Math.round(oosRet * 1000), total_trades: oosTrades },
+        },
+      },
+      degradation: {
+        is_return_pct: isRet,
+        oos_return_pct: oosRet,
+        return_delta_pct: round(oosRet - isRet, 4),
+        is_sharpe: round((seed % 20) / 10, 2),
+        oos_sharpe: round(((seed >> 4) % 15) / 10, 2),
+        efficiency_ratio: isRet ? round(oosRet / isRet, 4) : null,
+        oos_is_profitable: oosRet > 0,
+        oos_trades: oosTrades,
+      },
+    });
+  }
   m = pathOnly.match(/^\/backtests\/([^/]+)\/candles$/);
   if (m && method === "GET") {
     const run = [...createdBacktests, ...seedRuns].find((r) => r.id === m![1]);

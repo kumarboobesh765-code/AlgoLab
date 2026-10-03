@@ -759,6 +759,34 @@ export interface MonteCarloResponse {
   horizon_days: number;
 }
 
+// ---- In/Out-of-Sample validation ----
+
+export interface SplitWindow {
+  start: string;
+  end: string;
+  summary: Record<string, number | string | boolean>;
+}
+
+/** Named OosValidationResponse to avoid colliding with the strategy-definition
+ *  `ValidationResponse` used by /quant/validate. */
+export interface OosValidationResponse {
+  split_index: number;
+  split_time: string;
+  warmup_bars: number;
+  bars_used: number;
+  windows: { in_sample: SplitWindow; out_of_sample: SplitWindow };
+  degradation: {
+    is_return_pct: number;
+    oos_return_pct: number;
+    return_delta_pct: number;
+    is_sharpe: number;
+    oos_sharpe: number;
+    efficiency_ratio: number | null;
+    oos_is_profitable: boolean;
+    oos_trades: number;
+  };
+}
+
 // ---- Options Basket (Milestone F) ----
 
 export interface BasketLegInput {

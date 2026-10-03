@@ -17,6 +17,7 @@ import { useAppSettings } from "@/lib/settings";
 import { DeployModal } from "@/components/backtest/DeployModal";
 import { StartPaperTradeModal } from "@/components/backtest/StartPaperTradeModal";
 import { DrawdownMC } from "@/components/reports/DrawdownMC";
+import { OutOfSamplePanel } from "@/components/backtest/OutOfSamplePanel";
 
 function todayISO(offsetDays = 0): string {
   const d = new Date();
@@ -366,6 +367,10 @@ export default function BacktestPage() {
               <DrawdownMC runId={run.id} />
             </div>
           )}
+
+          {/* key remounts on strategy change so the split never shows results
+              belonging to a different strategy. */}
+          {strategyId && <OutOfSamplePanel key={strategyId} strategyId={strategyId} />}
 
           {selected && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
