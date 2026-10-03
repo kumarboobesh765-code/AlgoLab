@@ -6,14 +6,20 @@ Best-effort :class:`BrokerGateway` implementation over the DhanHQ REST API
 
 from datetime import datetime
 
+import httpx
+
 from app.execution.base_rest import BaseRestBroker
 from app.execution.gateway import (
+    AuthenticationError,
+    BrokerError,
     Exchange,
     Funds,
     Holding,
     Instrument,
+    InsufficientMarginError,
     Margin,
     Order,
+    OrderRejectedError,
     OrderRequest,
     OrderResponse,
     OrderSide,
@@ -52,6 +58,47 @@ class DhanGateway(BaseRestBroker):
     def auth_headers(self) -> dict:
         return {"access-token": self.access_token, "Content-Type": "application/json", "Accept": "application/json"}
 
+    def _handle(self, resp: httpx.Response) -> dict:
+        """Parse a Dhan response, which signals errors in the body, not the status.
+
+        Two Dhan-specific cases the shared parser misses:
+
+        - Dhan returns HTTP 200 with {"errorType", "errorMessage"} for a rejected
+          request, expired token included. The shared parser only understands
+          HTTP status codes and a `status: "error"` envelope, so the error object
+          flowed into the response parsers as if it were data: an unauthenticated
+          account reported zero available margin rather than an auth failure.
+        - A wrong path answers with a Spring {"status": 404, "error": ...} body
+          and a real 404 status. `_handle` looks for the string "error" there, not
+          the integer, so a mistyped endpoint returned an empty payload silently.
+        """
+        if resp.status_code >= 400 and "application/json" not in resp.headers.get(
+            "content-type", ""
+        ):
+            raise BrokerError(
+                f"HTTP_{resp.status_code}", f"Non-JSON response: {resp.text[:200]}", self.name
+            )
+        body = super()._handle(resp)
+        if not isinstance(body, dict):
+            return body
+        # Spring error envelope for an unrouted path.
+        if isinstance(body.get("status"), int) and body.get("status") >= 400:
+            raise BrokerError(
+                f"HTTP_{body['status']}",
+                str(body.get("error") or body.get("message") or "Broker error"),
+                self.name,
+            )
+        if "errorType" in body or "errorMessage" in body:
+            code = str(body.get("errorCode") or body.get("errorType") or "DHAN_ERROR")
+            msg = str(body.get("errorMessage") or "Broker error")
+            upper = f"{code} {msg}".upper()
+            if "AUTH" in upper or "TOKEN" in upper or "INVALID_ACCESS" in upper:
+                raise AuthenticationError(code, msg, self.name)
+            if "MARGIN" in upper:
+                raise InsufficientMarginError(code, msg, self.name)
+            raise OrderRejectedError(code, msg, self.name)
+        return body
+
     async def connect(self) -> bool:
         try:
             await self.get_profile()
@@ -68,12 +115,20 @@ class DhanGateway(BaseRestBroker):
         return await self._request("GET", "/v2/profile")
 
     async def get_funds(self) -> Funds:
-        data = await self._request("GET", "/v2/funds")
+        # Dhan exposes limits at /v2/fundlimit. /v2/funds does not exist and
+        # answers 404, which used to be parsed as an empty payload and surfaced
+        # as zero available margin instead of an error.
+        data = await self._request("GET", "/v2/fundlimit")
         eq = data.get("equity", {})
-        return Funds(equity=float(eq.get("available_margin", 0)), commodity=0, used_margin=float(eq.get("used_margin", 0)), available_cash=float(eq.get("available_margin", 0)))
+        return Funds(
+            equity=float(eq.get("availableMargin", 0)),
+            commodity=float(data.get("commodity", {}).get("availableMargin", 0)),
+            used_margin=float(eq.get("utilisedMargin", 0)),
+            available_cash=float(eq.get("availableMargin", 0)),
+        )
 
     async def get_margin(self) -> Margin:
-        data = await self._request("GET", "/v2/funds")
+        data = await self._request("GET", "/v2/fundlimit")
         return Margin(equity=data.get("equity", {}), commodity=data.get("commodity", {}))
 
     async def get_positions(self) -> list[Position]:
