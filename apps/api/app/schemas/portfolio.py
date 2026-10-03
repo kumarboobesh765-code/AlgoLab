@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +39,32 @@ class CombineOut(BaseModel):
     combined_equity_curve: list[dict[str, Any]]
     combined_summary: dict[str, Any]
     error: str | None
+
+
+class SubsetCandidate(BaseModel):
+    rank: int
+    run_ids: list[str]
+    strategy_names: list[str]
+    metrics: dict[str, Any]
+
+
+class SubsetOptimiseRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1, max_length=60)
+    size: int | None = Field(default=None, ge=1, le=12)
+    objective: Literal["sharpe_ratio", "return_pct", "calmar"] = "sharpe_ratio"
+    top_n: int = Field(default=5, ge=1, le=20)
+
+
+class SubsetOptimiseOut(BaseModel):
+    objective: str
+    exhaustive: bool
+    subset_size: int
+    candidates_considered: int
+    combinations_possible: int = 0
+    best: SubsetCandidate | None
+    runners_up: list[SubsetCandidate]
+    single_best: SubsetCandidate | None
+    note: str | None
 
 
 class DailyPnlRequest(BaseModel):

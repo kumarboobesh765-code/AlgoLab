@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.backtest import BacktestResult, Trade
 from app.backtest.portfolio_engine import PortfolioInput, combine
+from app.backtest.subset import optimise_subset as optimise_subsets
 from app.core.deps import CurrentUser, DbSession
 from app.models import BacktestRun, Strategy
 from app.schemas.portfolio import (
@@ -23,6 +24,8 @@ from app.schemas.portfolio import (
     DailyPnlPoint,
     PortfolioBacktestOut,
     PortfolioBacktestRequest,
+    SubsetOptimiseOut,
+    SubsetOptimiseRequest,
 )
 from app.services.backtest_runner import execute_backtest
 
@@ -232,6 +235,69 @@ async def combine_runs(
         combined_summary=combined_summary,
         error=None,
     )
+
+
+@router.post("/optimise-subset", response_model=SubsetOptimiseOut)
+async def optimise_subset(
+    request: Request,
+    payload: SubsetOptimiseRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> SubsetOptimiseOut:
+    """Rank subsets of the supplied runs on the combined curve.
+
+    Combinations are scored on how they perform together, not on individual rank,
+    so two strategies that peaked in the same month are correctly treated as one
+    bet rather than two. Returns runners-up and the best single run so the
+    recommendation is legible and a subset that fails to beat its own best
+    component is visible as such.
+    """
+    _require_whitelisted_ip(request)
+    parsed: list[uuid.UUID] = []
+    for rid in payload.run_ids:
+        try:
+            parsed.append(uuid.UUID(rid))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Invalid run_id: {rid}"
+            ) from exc
+
+    result = await db.execute(
+        select(BacktestRun, Strategy.name)
+        .join(Strategy, Strategy.id == BacktestRun.strategy_id)
+        .where(BacktestRun.id.in_(parsed), BacktestRun.user_id == current_user.id)
+    )
+    rows = result.all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No matching runs found")
+
+    inputs: list[PortfolioInput] = []
+    for run, strat_name in rows:
+        if run.status != "completed":
+            continue
+        cfg = run.config or {}
+        inputs.append(
+            PortfolioInput(
+                strategy_id=str(run.strategy_id),
+                strategy_name=strat_name,
+                initial_capital=float(cfg.get("initial_capital", 0.0)),
+                result=_run_to_backtest_result(run),
+            )
+        )
+
+    if not inputs:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "None of the supplied runs have completed with an equity curve",
+        )
+
+    outcome = optimise_subsets(
+        inputs,
+        size=payload.size,
+        objective=payload.objective,
+        top_n=payload.top_n,
+    )
+    return SubsetOptimiseOut(**outcome)
 
 
 @router.get("/daily-pnl", response_model=DailyPnlOut)
