@@ -21,8 +21,14 @@ class BasketPayoffRequest(BaseModel):
 class BasketPayoffPoint(BaseModel):
     underlying: float
     current_value: float
+    """Gross mark-to-market value of the legs today (premium already paid/received)."""
     expiry_value: float
+    """Gross intrinsic value of the legs at expiry, before the premium is netted off."""
+    expiry_pnl: float
+    """P&L at expiry: expiry_value + net_premium. This is the curve that crosses
+    zero at the breakevens, and the curve max_profit/max_loss are read from."""
     combined_premium: float
+    """P&L today: current_value + net_premium."""
 
 
 class BasketPayoffResponse(BaseModel):

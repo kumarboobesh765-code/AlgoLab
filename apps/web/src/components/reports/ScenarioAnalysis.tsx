@@ -38,9 +38,9 @@ function fmtMoney(v: number | null): string {
   return `${sign}₹${abs.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
-function MiniSparkline({ points, color }: { points: { expiry_value: number }[]; color: string }) {
+function MiniSparkline({ points, color }: { points: { expiry_pnl: number }[]; color: string }) {
   const w = 220, h = 48, pad = 4;
-  const ys = points.map((p) => p.expiry_value);
+  const ys = points.map((p) => p.expiry_pnl);
   const min = Math.min(...ys);
   const max = Math.max(...ys);
   const span = max - min || 1;
@@ -51,7 +51,7 @@ function MiniSparkline({ points, color }: { points: { expiry_value: number }[]; 
         `${i === 0 ? "M" : "L"} ${(pad + (i / (points.length - 1)) * (w - 2 * pad)).toFixed(1)} ${(
           h -
           pad -
-          ((p.expiry_value - min) / span) * (h - 2 * pad)
+          ((p.expiry_pnl - min) / span) * (h - 2 * pad)
         ).toFixed(1)}`,
     )
     .join(" ");
@@ -244,8 +244,8 @@ function ComparisonChart({ results }: { results: ScenarioResult[] }) {
   const xmin = Math.min(...allXs), xmax = Math.max(...allXs);
   let ymin = Infinity, ymax = -Infinity;
   for (const r of results) for (const p of r.payoff) {
-    if (p.expiry_value < ymin) ymin = p.expiry_value;
-    if (p.expiry_value > ymax) ymax = p.expiry_value;
+    if (p.expiry_pnl < ymin) ymin = p.expiry_pnl;
+    if (p.expiry_pnl > ymax) ymax = p.expiry_pnl;
   }
   const span = Math.max((ymax - ymin) * 0.1, 1);
   ymin -= span; ymax += span;
@@ -260,7 +260,7 @@ function ComparisonChart({ results }: { results: ScenarioResult[] }) {
         {results.map((r, i) => {
           const color = COLORS[i % COLORS.length];
           const path = r.payoff
-            .map((p, j) => `${j === 0 ? "M" : "L"} ${X(p.underlying).toFixed(1)} ${Y(p.expiry_value).toFixed(1)}`)
+            .map((p, j) => `${j === 0 ? "M" : "L"} ${X(p.underlying).toFixed(1)} ${Y(p.expiry_pnl).toFixed(1)}`)
             .join(" ");
           return (
             <path

@@ -954,6 +954,14 @@ function mockBasketPayoff(body: Record<string, unknown>): BasketPayoffResponse {
     return U * Math.exp(-0.5 * d1 * d1) / SQRT_2PI * sqrtT * 0.01;
   }
 
+  let netPremium = 0;
+  for (const leg of legs) {
+    const prem = Number(leg.premium) || 0;
+    const qty = Number(leg.quantity ?? 1);
+    const sign = leg.action === "buy" ? 1 : -1;
+    netPremium -= sign * prem * qty;
+  }
+
   const payoff: BasketPayoffResponse["payoff"] = [];
   for (let i = -50; i <= 50; i++) {
     const U = spot * (1 + i * 0.0025);
@@ -973,17 +981,19 @@ function mockBasketPayoff(body: Record<string, unknown>): BasketPayoffResponse {
       underlying: round(U, 2),
       current_value: round(currentValue, 2),
       expiry_value: round(expiryValue, 2),
-      combined_premium: round(currentValue, 2),
+      expiry_pnl: round(expiryValue + netPremium, 2),
+      combined_premium: round(currentValue + netPremium, 2),
     });
   }
 
+  // break-evens are where P&L crosses zero, not where the basket expires worthless
   const breakevens: number[] = [];
   for (let i = 0; i < payoff.length - 1; i++) {
     const p0 = payoff[i];
     const p1 = payoff[i + 1];
-    if ((p0.expiry_value <= 0 && p1.expiry_value > 0) || (p1.expiry_value <= 0 && p0.expiry_value > 0)) {
-      if (p1.expiry_value === p0.expiry_value) continue;
-      const t = -p0.expiry_value / (p1.expiry_value - p0.expiry_value);
+    if ((p0.expiry_pnl <= 0 && p1.expiry_pnl > 0) || (p1.expiry_pnl <= 0 && p0.expiry_pnl > 0)) {
+      if (p1.expiry_pnl === p0.expiry_pnl) continue;
+      const t = -p0.expiry_pnl / (p1.expiry_pnl - p0.expiry_pnl);
       const be = Math.round((p0.underlying + t * (p1.underlying - p0.underlying)) * 2) / 2;
       breakevens.push(be);
     }
@@ -1001,15 +1011,7 @@ function mockBasketPayoff(body: Record<string, unknown>): BasketPayoffResponse {
     combinedVega += sign * bsVega(spot, K) * qty;
   }
 
-  let netPremium = 0;
-  for (const leg of legs) {
-    const prem = Number(leg.premium) || 0;
-    const qty = Number(leg.quantity ?? 1);
-    const sign = leg.action === "buy" ? 1 : -1;
-    netPremium -= sign * prem * qty;
-  }
-
-  const expiryValues = payoff.map((p) => p.expiry_value);
+  const expiryValues = payoff.map((p) => p.expiry_pnl);
   const maxProfitVal = Math.max(...expiryValues);
   const maxLossVal = Math.min(...expiryValues);
 

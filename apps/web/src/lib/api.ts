@@ -782,6 +782,7 @@ export interface BasketPayoffPoint {
   underlying: number;
   current_value: number;
   expiry_value: number;
+  expiry_pnl: number;
   combined_premium: number;
 }
 

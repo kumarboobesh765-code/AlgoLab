@@ -584,8 +584,8 @@ function BasketResults({ result }: { result: BasketPayoffResponse }) {
   const W = 780, H = 320;
   const PAD = { l: 64, r: 18, t: 14, b: 36 };
   const xs = result.payoff.map((p: { underlying: number }) => p.underlying);
-  const ysCurrent = result.payoff.map((p: { current_value: number }) => p.current_value);
-  const ysExpiry = result.payoff.map((p: { expiry_value: number }) => p.expiry_value);
+  const ysCurrent = result.payoff.map((p) => p.combined_premium);
+  const ysExpiry = result.payoff.map((p) => p.expiry_pnl);
   const xmin = Math.min(...xs), xmax = Math.max(...xs);
   let ymin = Math.min(0, ...ysCurrent, ...ysExpiry), ymax = Math.max(0, ...ysCurrent, ...ysExpiry);
   const pad = Math.max((ymax - ymin) * 0.08, 1);

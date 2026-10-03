@@ -25,14 +25,22 @@ def _round_to_nearest(value: float, step: float) -> float:
 def _find_breakevens(
     payoff: list[BasketPayoffPoint],
 ) -> list[float]:
+    """Underlying levels where the basket breaks even at expiry.
+
+    Uses expiry_pnl, not expiry_value: a basket is break-even when its P&L is
+    zero, which is not where it expires worthless. A long 22000 straddle paying
+    600 breaks even near 21400/22600, not at 22000.
+    """
     breakevens: list[float] = []
     for i in range(len(payoff) - 1):
         p0 = payoff[i]
         p1 = payoff[i + 1]
-        if (p0.expiry_value <= 0 < p1.expiry_value) or (p1.expiry_value <= 0 < p0.expiry_value):
-            if p1.expiry_value == p0.expiry_value:
+        v0 = p0.expiry_pnl
+        v1 = p1.expiry_pnl
+        if (v0 <= 0 < v1) or (v1 <= 0 < v0):
+            if v1 == v0:
                 continue
-            t = -p0.expiry_value / (p1.expiry_value - p0.expiry_value)
+            t = -v0 / (v1 - v0)
             be = _round_to_nearest(p0.underlying + t * (p1.underlying - p0.underlying), 0.5)
             breakevens.append(be)
     return sorted(set(breakevens))
@@ -85,6 +93,14 @@ def compute_basket_payoff(request: BasketPayoffRequest) -> BasketPayoffResponse:
         U = spot * (1.0 + i * step_pct)
         underlying_range.append(round(U, 2))
 
+    # Positive means net credit received, negative means net debit paid.
+    # Every P&L figure below is a gross value *plus* this figure, so the premium
+    # is netted exactly once and the curve crosses zero at the breakevens.
+    net_premium = -sum(
+        (1.0 if leg["action"] == "buy" else -1.0) * leg.get("premium", 0) * leg.get("quantity", 1)
+        for leg in legs
+    )
+
     payoff: list[BasketPayoffPoint] = []
     for U in underlying_range:
         current_value = 0.0
@@ -118,22 +134,18 @@ def compute_basket_payoff(request: BasketPayoffRequest) -> BasketPayoffResponse:
                 underlying=round(U, 2),
                 current_value=round(current_value, 2),
                 expiry_value=round(expiry_value, 2),
-                combined_premium=round(current_value, 2),
+                expiry_pnl=round(expiry_value + net_premium, 2),
+                combined_premium=round(current_value + net_premium, 2),
             )
         )
 
-    net_premium = -sum(
-        (1.0 if leg["action"] == "buy" else -1.0) * leg.get("premium", 0) * leg.get("quantity", 1)
-        for leg in legs
-    )
-
     breakeven_points = _find_breakevens(payoff)
 
-    expiry_values = [p.expiry_value for p in payoff]
+    expiry_pnls = [p.expiry_pnl for p in payoff]
 
-    if expiry_values:
-        max_profit_val = max(expiry_values)
-        max_loss_val = min(expiry_values)
+    if expiry_pnls:
+        max_profit_val = max(expiry_pnls)
+        max_loss_val = min(expiry_pnls)
 
         bought_calls = any(
             leg["option_type"] == "CE" and leg["action"] == "buy" for leg in legs
