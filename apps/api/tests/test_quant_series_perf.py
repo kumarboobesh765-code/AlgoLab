@@ -11,7 +11,6 @@ import pytest
 
 from app.api.v1.quant import _minutes_per_interval, _series_history_days
 
-
 # --- history window sizing --------------------------------------------------
 
 
@@ -110,8 +109,9 @@ async def test_stored_candles_are_preferred_over_the_provider(monkeypatch):
 @pytest.mark.asyncio
 async def test_falls_back_to_provider_when_nothing_is_stored(monkeypatch):
     """The terminal must still work before any history has been ingested."""
-    from app.api.v1 import quant
     from datetime import UTC, datetime, timedelta
+
+    from app.api.v1 import quant
 
     async def fake_load(db, **kwargs):
         return []
@@ -135,8 +135,9 @@ async def test_falls_back_to_provider_when_nothing_is_stored(monkeypatch):
 @pytest.mark.asyncio
 async def test_store_failure_falls_back_instead_of_500(monkeypatch):
     """A database problem must not break the chart terminal."""
-    from app.api.v1 import quant
     from datetime import UTC, datetime, timedelta
+
+    from app.api.v1 import quant
 
     async def boom(db, **kwargs):
         raise RuntimeError("db exploded")
