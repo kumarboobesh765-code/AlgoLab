@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from app.api.v1.quant import _jsonable, _parse_indicator_token
+from app.api.v1.quant import _jsonable, _parse_indicator_token, _split_indicator_tokens
 from app.quant.indicators import IndicatorError
 
 PARAMS = {
@@ -68,6 +68,64 @@ class TestTokenParser:
         # OBV takes no params, so a positional token is meaningless
         with pytest.raises(IndicatorError):
             _parse_indicator_token("OBV:5")
+
+
+class TestTokenSplitting:
+    """The comma is overloaded: it separates tokens AND separates parameters.
+
+    ``BBANDS:length=20,stddev=2`` is one token with two params, while
+    ``SMA:20,RSI:14`` is two tokens. Splitting naively on "," silently broke
+    every multi-parameter indicator, including in /quant/series.
+    """
+
+    def test_multi_param_token_stays_one_token(self):
+        assert _split_indicator_tokens("BBANDS:length=20,stddev=2") == [
+            "BBANDS:length=20,stddev=2"
+        ]
+
+    def test_three_params_plus_next_indicator(self):
+        assert _split_indicator_tokens("KAMA:length=10,fast=2,slow=30,RSI:14") == [
+            "KAMA:length=10,fast=2,slow=30",
+            "RSI:14",
+        ]
+
+    def test_simple_list_unchanged(self):
+        assert _split_indicator_tokens("SMA:length=10,RSI:14") == [
+            "SMA:length=10",
+            "RSI:14",
+        ]
+
+    def test_unknown_indicator_is_its_own_token(self):
+        """An unrecognised name must surface as its own error rather than
+        being absorbed into a neighbour's parameter list."""
+        assert _split_indicator_tokens("SMA:20,NOT_REAL,RSI:14") == [
+            "SMA:20",
+            "NOT_REAL",
+            "RSI:14",
+        ]
+
+    def test_stddev_param_not_confused_with_stddev_indicator(self):
+        """STDDEV is both a real indicator and a parameter of BBANDS."""
+        assert _split_indicator_tokens("STDDEV:20,BBANDS:length=20,stddev=2") == [
+            "STDDEV:20",
+            "BBANDS:length=20,stddev=2",
+        ]
+
+    def test_bare_then_positional_then_keyed(self):
+        assert _split_indicator_tokens("SMA,SMA:14,SMA:length=9") == [
+            "SMA",
+            "SMA:14",
+            "SMA:length=9",
+        ]
+
+    def test_empty_and_whitespace(self):
+        assert _split_indicator_tokens("") == []
+        assert _split_indicator_tokens(" , ") == []
+
+    def test_split_token_reaches_parser_intact(self):
+        (ind_type, params) = _parse_indicator_token("BBANDS:length=20,stddev=2")
+        assert ind_type == "BBANDS"
+        assert params == {"length": 20, "stddev": 2.0}
 
 
 class TestJsonable:

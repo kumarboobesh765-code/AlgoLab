@@ -16,6 +16,47 @@ from app.services.ingest import resolve_instrument
 router = APIRouter(prefix="/quant", tags=["quant"])
 
 
+def _split_indicator_tokens(indicators: str) -> list[str]:
+    """Split a comma-separated overlay list into individual tokens.
+
+    Naive ``split(",")`` breaks multi-parameter indicators: the comma inside
+    ``BBANDS:length=20,stddev=2`` looks like a separator, so the tail is
+    mistaken for a new indicator.
+
+    The grammar makes this unambiguous. A token is either ``TYPE`` or
+    ``TYPE:<positional>`` or ``TYPE:k=v,...``. So a chunk that carries no ``=``
+    is always a new token, even if its type is unknown, because an unrecognised
+    indicator must surface as its own error rather than being silently absorbed
+    into a neighbour's parameter list.
+
+    For a chunk that does carry ``=``, it is a parameter of the current token
+    when the key names one of that token's parameters; otherwise it starts a new
+    token. Testing against the *current token's* params rather than against all
+    indicator names matters: ``STDDEV`` is both a real indicator and a
+    parameter of ``BBANDS``, so a global name lookup misreads
+    ``BBANDS:length=20,stddev=2`` as two indicators.
+    """
+    tokens: list[str] = []
+    for chunk in indicators.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if not tokens:
+            tokens.append(chunk)
+            continue
+        if "=" not in chunk:
+            tokens.append(chunk)
+            continue
+        current_type = tokens[-1].partition(":")[0].strip().upper()
+        key = chunk.partition("=")[0].strip().lower()
+        params = INDICATORS[current_type].params if current_type in INDICATORS else {}
+        if key in params:
+            tokens[-1] = f"{tokens[-1]},{chunk}"
+        else:
+            tokens.append(chunk)
+    return tokens
+
+
 def _parse_indicator_token(token: str) -> tuple[str, dict]:
     """Parse a chart overlay spec like ``SMA:length=20`` or ``RSI:14``.
 
@@ -89,7 +130,7 @@ async def indicator_series(
 
     `indicators` is a comma-separated list of ``TYPE`` or ``TYPE:k=v`` specs.
     """
-    tokens = [t for t in indicators.split(",") if t.strip()]
+    tokens = _split_indicator_tokens(indicators)
     end = datetime.now(UTC)
     start = end - timedelta(days=60)
     try:
