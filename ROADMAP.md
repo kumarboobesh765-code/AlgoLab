@@ -624,13 +624,26 @@ Nothing in the feature table is left unbuilt. The outstanding work is the
 
 ### Deferred, with reasons
 
-- **G25 broker coverage.** 7 brokers are live (Zerodha, Upstox, AngelOne, Dhan,
-  Fyers, ICICI Direct, 5paisa). Every adapter needs its own auth flow, symbol
-  master mapping and product-type/segment quirks, and none can be verified
+- **G25 broker coverage.** 7 brokers are implemented (Zerodha, Upstox, AngelOne,
+  Dhan, Fyers, ICICI Direct, 5paisa). Every adapter needs its own auth flow,
+  symbol master mapping and product-type/segment quirks, and none can be verified
   without live credentials. Unverified order-placement code is worse than fewer
   working brokers, so these are added one at a time with credentials in hand.
   All 7 are held to a shared contract test (`tests/test_broker_contracts.py`),
   so a new one is a self-contained drop-in via `register_broker`.
+
+  **Dhan has been exercised against the live API** and two real bugs were found
+  and fixed: funds were read from `/v2/funds`, which does not exist (correct
+  endpoint is `/v2/fundlimit`), and Dhan returns errors as HTTP 200 bodies, so a
+  bad token reported zero available margin instead of an auth failure. Still
+  unverified: live order placement and the instrument master, which need real
+  credentials. Dhan access tokens are **daily** and must be regenerated each
+  trading day.
+
+  Credentials are read as `<BROKER>_CLIENT_ID` / `_API_KEY` / `_ACCESS_TOKEN` /
+  `_USER_EMAIL` from the environment. `_broker_config` previously mapped only
+  Zerodha, so every other gateway sent an empty token; that is fixed and covered
+  by `tests/test_broker_credentials.py`.
 - **G17 multi-instrument.** Requires changing `StrategyDefinition`, which is
   single-instrument with `extra="forbid"`. That cascades into both engines,
   backtest storage and the UI, and needs a design decision first: one
