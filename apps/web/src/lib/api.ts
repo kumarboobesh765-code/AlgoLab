@@ -664,8 +664,15 @@ export interface AiDraftResponse {
 }
 
 export interface StrategyTemplate {
+  id: string;
   name: string;
   description: string;
+  /** intraday | swing | credit-spread | short-straddle | short-strangle |
+   *  option-buying | option-selling | expiry-day */
+  category: string;
+  complexity: string;
+  underlying: string;
+  min_capital: number;
   tags: string[];
   definition: Record<string, unknown>;
 }

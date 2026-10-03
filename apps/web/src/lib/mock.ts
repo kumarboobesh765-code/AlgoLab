@@ -802,7 +802,17 @@ function mockAiDraft(prompt: string): AiDraftResponse {
 // ---------------------------------------------------------------------------
 // templates
 // ---------------------------------------------------------------------------
-function mockTemplates(): { name: string; description: string; tags: string[]; definition: Record<string, unknown> }[] {
+function mockTemplates(): {
+  id: string;
+  name: string;
+  description: string;
+  tags: string[];
+  category: string;
+  complexity: string;
+  underlying: string;
+  min_capital: number;
+  definition: Record<string, unknown>;
+}[] {
   const fnoTemplates = [
     { name: "NIFTY Bull Call Spread", description: "Bullish spread on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "buy", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "sell", option_type: "CE", strike_offset: 1, lots: 75 }], version: 1 } },
     { name: "NIFTY Long Straddle", description: "Long straddle on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "buy", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "buy", option_type: "PE", strike_offset: 0, lots: 75 }], version: 1 } },
@@ -811,7 +821,10 @@ function mockTemplates(): { name: string; description: string; tags: string[]; d
     { name: "BANKNIFTY Bear Put Spread", description: "Bear put spread on BANKNIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "BANKNIFTY", legs: [{ action: "buy", option_type: "PE", strike_offset: 0, lots: 30 }, { action: "sell", option_type: "PE", strike_offset: -1, lots: 30 }], version: 1 } },
     { name: "NIFTY Iron Butterfly", description: "Iron butterfly on NIFTY.", tags: ["options", "fno"], definition: { builder: "legs", underlying: "NIFTY", legs: [{ action: "sell", option_type: "CE", strike_offset: 0, lots: 75 }, { action: "sell", option_type: "PE", strike_offset: 0, lots: 75 }, { action: "buy", option_type: "CE", strike_offset: 1, lots: 75 }, { action: "buy", option_type: "PE", strike_offset: -1, lots: 75 }], version: 1 } },
   ];
-  return [
+  // Normalise to the shape /strategies/templates actually returns. The real
+  // endpoint includes id, category, complexity, underlying and min_capital;
+  // without these the library page renders blank in the default mock mode.
+  const raw = [
     { name: "EMA Crossover", description: "Dual EMA trend crossover.", tags: ["trend"], definition: STRAT_DEFS.ema },
     { name: "RSI Reversion", description: "Oversold bounce.", tags: ["mean-reversion"], definition: STRAT_DEFS.rsi },
     { name: "MACD Momentum", description: "MACD signal crossover.", tags: ["momentum"], definition: STRAT_DEFS.macd },
@@ -820,6 +833,14 @@ function mockTemplates(): { name: string; description: string; tags: string[]; d
     { name: "VWAP", description: "Intraday VWAP pullback.", tags: ["intraday"], definition: STRAT_DEFS.vwap },
     ...fnoTemplates,
   ];
+  return raw.map((t, i) => ({
+    id: `mock-tpl-${i}`,
+    ...t,
+    category: t.definition?.legs ? "option-selling" : "intraday",
+    complexity: i % 3 === 0 ? "beginner" : i % 3 === 1 ? "intermediate" : "advanced",
+    underlying: (t.definition?.underlying as string) ?? "NIFTY",
+    min_capital: t.definition?.legs ? 200_000 : 100_000,
+  }));
 }
 
 // ---------------------------------------------------------------------------

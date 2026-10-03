@@ -577,7 +577,7 @@ Last verified against the codebase, not aspirational.
 | G1 | Compare two strategies side-by-side with metric overlay | AlgoTest | ✅ shipped (`/compare`) | — | — |
 | G2 | **In/Out-of-Sample split** in backtest report | AlgoTest | ✅ shipped (API + UI panel) | — | — |
 | G3 | Monte Carlo Drawdown bootstrap | AlgoTest | ✅ shipped | — | — |
-| G4 | Sensitivity Heatmap visualisation UI | AlgoTest | ⚠️ API only, no UI | P2 | Small |
+| G4 | Sensitivity Heatmap visualisation UI | AlgoTest | ✅ shipped (`HeatmapPanel`) | — | — |
 | G5 | Portfolio backtest (run many strategies together) | AlgoTest | ✅ shipped (`/portfolio`) | — | — |
 | G6 | **Portfolio Optimiser** (subset picker by metric) | AlgoTest | ❌ missing | P2 | Medium |
 | G7 | Signals AI — strategy from prompt, auto-backtest | AlgoTest | ✅ shipped (`/ai`) | — | — |
@@ -588,7 +588,7 @@ Last verified against the codebase, not aspirational.
 | G12 | **Switch to Manual** disconnect | AlgoTest | ❌ missing | P2 | Small |
 | G13 | Free Charts (Straddle/Strangle live) | AlgoTest | ✅ shipped | — | — |
 | G14 | Daily Trades Analysis end-of-day PnL | AlgoTest | ✅ shipped (`/reports/daily-pnl`) | — | — |
-| G15 | **Sample strategy library** page | AlgoTest | ⚠️ templates exist, no `/library` page | P1 | Small |
+| G15 | **Sample strategy library** page | AlgoTest | ✅ 33 templates at `/builder/templates`, now searchable | — | — |
 | G16 | Options Basket combined-premium chart | Quantman | ✅ shipped (+ Scenario Analysis) | — | — |
 | G17 | **Multi-instrument Advanced Mode** (6 monitor / 3 trade) | Quantman | ❌ missing | P3 | Large |
 | G18 | Strike Multiplier rounding | Quantman | ✅ shipped | — | — |
@@ -602,17 +602,18 @@ Last verified against the codebase, not aspirational.
 
 ### Remaining, in recommended order
 
-1. **G15 — Sample strategy library page.** Templates exist with no browsable UI.
-2. **G4 — Heatmap UI.** `run_heatmap` and `HeatmapCell` already exist; only the
-   visualisation is missing.
-3. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
+1. **G11 / G12 — Auto-activation and manual-disconnect.** Small, and they matter
    once a strategy is actually deployed to a broker.
-4. **G6 — Portfolio optimiser subset picker.**
+2. **G6 — Portfolio optimiser subset picker.**
 
-### UI work still outstanding for shipped backend features
+### Notes on items previously believed missing
 
-- **G4** is the same situation: `run_heatmap` and `HeatmapCell` exist, but no
-  visualisation renders them.
+- **G4 heatmap** was already shipped (`HeatmapPanel` on `/optimization`). Verified
+  against the code rather than the roadmap.
+- **G15** shipped as `/builder/templates` with 33 templates. It lacked search and
+  category filtering, which is what made it look absent; that is now added rather
+  than duplicating the page at a second URL.
+- **G2** shipped with both API and UI.
 
 ### Deferred, with reasons
 
@@ -655,10 +656,8 @@ priorities are the "Missing" table above.
 
 See the "Remaining, in recommended order" list above. In short:
 
-1. **G15 Sample library page** — templates exist with no browsable UI.
-2. **G4 Heatmap UI** — backend already done.
-3. **G11/G12 Auto-activation and manual-disconnect.**
-4. **G6 Portfolio optimiser subset picker.**
+1. **G11/G12 Auto-activation and manual-disconnect.**
+2. **G6 Portfolio optimiser subset picker.**
 
 Blocked or deferred: G25 broker coverage (needs credentials), G17
 multi-instrument (needs a schema decision), G24 streaming breadth (needs
