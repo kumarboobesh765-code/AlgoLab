@@ -123,7 +123,15 @@ def run_backtest(
     definition: StrategyDefinition,
     candles: Sequence[Candle],
     config: BacktestConfig | None = None,
+    signals: Sequence[int] | None = None,
 ) -> BacktestResult:
+    """Backtest `definition` over `candles`.
+
+    `signals` overrides the definition's own entry/exit conditions with a
+    precomputed signal list, where 1 = enter, -1 = exit, 0 = hold. This is how
+    Python strategies (app/strategies/python_host.py) reuse the position sizing,
+    risk and cost model instead of reimplementing a portfolio backtest.
+    """
     cfg = config or BacktestConfig()
     if len(candles) < 2:
         raise BacktestError("Need at least 2 candles to run a backtest")
@@ -132,9 +140,18 @@ def run_backtest(
     if cfg.costs_pct < 0 or cfg.costs_pct > 5:
         raise BacktestError("costs_pct must be between 0 and 5")
 
-    evaluation = evaluate_definition(definition, candles)
-    entry_signals = evaluation.entry_signals
-    exit_signals = evaluation.exit_signals
+    if signals is not None:
+        if len(signals) != len(candles):
+            raise BacktestError(
+                f"signals has {len(signals)} entries for {len(candles)} candles; "
+                "they must align one-to-one"
+            )
+        entry_signals = [1 if s > 0 else 0 for s in signals]
+        exit_signals = [1 if s < 0 else 0 for s in signals]
+    else:
+        evaluation = evaluate_definition(definition, candles)
+        entry_signals = evaluation.entry_signals
+        exit_signals = evaluation.exit_signals
 
     pos_cfg = definition.position
     direction_mode = pos_cfg.direction
