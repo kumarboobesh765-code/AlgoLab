@@ -6,16 +6,31 @@ rejected with a clear message instead of silently fetching provider data.
 """
 
 import uuid
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.backtest import BacktestError
+from app.backtest.engine import BacktestConfig
 from app.backtest.options_engine import OptionsBacktestError
+from app.backtest.validation import (
+    ValidationError,
+    run_split_backtest,
+    to_payload,
+)
 from app.core.deps import CurrentUser, DbSession
 from app.models import BacktestRun, Strategy
-from app.schemas.backtest import BacktestRunDetail, BacktestRunOut, BacktestRunRequest
+from app.quant.schema import StrategyDefinition
+from app.schemas.backtest import (
+    BacktestRunDetail,
+    BacktestRunOut,
+    BacktestRunRequest,
+    ValidationRequest,
+    ValidationResponse,
+)
 from app.services.backtest_runner import execute_backtest
+from app.services.candles import load_candles
 
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
@@ -57,6 +72,62 @@ async def create_backtest(
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Backtest engine failed"
         ) from exc
+
+
+@router.post("/validate", response_model=ValidationResponse)
+async def validate_backtest(
+    payload: ValidationRequest,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> dict:
+    """In/Out-of-Sample split for a strategy.
+
+    Reports performance on the in-sample segment next to performance on the
+    unseen segment, so a user can see whether an edge survives outside the data
+    it was built from. Not persisted: it is a read-only analysis of stored
+    candles, so it creates no BacktestRun.
+    """
+    strategy = await _owned_strategy(db, current_user.id, payload.strategy_id)
+    if not strategy.definition:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Strategy has no definition yet")
+
+    try:
+        definition = StrategyDefinition.model_validate(strategy.definition)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Stored definition is invalid: {exc}") from exc
+
+    end_dt = payload.end or date.today(UTC)
+    start_dt = payload.start or end_dt - timedelta(days=180)
+    if start_dt >= end_dt:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "start must be before end")
+
+    start = datetime.combine(start_dt, datetime.min.time(), tzinfo=UTC)
+    end = datetime.combine(end_dt, datetime.max.time().replace(microsecond=0), tzinfo=UTC)
+    candles = await load_candles(
+        db, symbol=strategy.underlying, interval=definition.timeframe, start=start, end=end
+    )
+    if len(candles) < 2:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"No stored {definition.timeframe} candles for {strategy.underlying} in range — "
+            "ingest history via Tools → Data Manager first",
+        )
+
+    config = BacktestConfig(
+        initial_capital=payload.initial_capital,
+        costs_pct=payload.costs_pct,
+        slippage_pct=payload.slippage_pct,
+    )
+    try:
+        result = run_split_backtest(definition, candles, config, split=payload.split)
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except BacktestError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    payload_out = to_payload(result)
+    payload_out["bars_used"] = len(candles)
+    return payload_out
 
 
 @router.get("", response_model=list[BacktestRunOut])
