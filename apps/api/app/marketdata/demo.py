@@ -7,11 +7,12 @@ broker credentials. Every response is clearly labeled `is_demo=True`.
 NEVER present this data as real market data.
 """
 
+import asyncio
 import hashlib
 import math
 from datetime import datetime, time, timedelta, timezone
 
-from app.marketdata.base import Candle, MarketDataProvider
+from app.marketdata.base import Candle, MarketDataProvider, Tick
 
 IST = timezone(timedelta(hours=5, minutes=30))
 MARKET_OPEN = time(9, 15)
@@ -93,6 +94,12 @@ class _Rng:
 class DemoProvider(MarketDataProvider):
     name = "demo"
     is_demo = True
+
+    def __init__(self) -> None:
+        # In-progress bar per symbol, keyed by bar timestamp, so consecutive
+        # ticks in the same interval window extend one candle instead of
+        # emitting a new bar on every tick.
+        self._running_bars: dict[str, dict] = {}
 
     async def get_instruments(self) -> list[dict]:
         """Normalized instrument records (same shape as the Dhan adapter emits)."""
@@ -232,6 +239,82 @@ class DemoProvider(MarketDataProvider):
             "lot_size": lot_size,
             "expiries": expiries,
         }
+
+    # ------------------------------------------------------------------
+    # Live streaming
+    # ------------------------------------------------------------------
+    async def supports_streaming(self) -> bool:
+        return True
+
+    async def stream_ticks(self, symbols: list[str], interval: str = "1m"):
+        """Simulate a live feed for `symbols` at roughly one tick per `interval`.
+
+        Each tick carries the running bar for the current interval window, so a
+        consumer can paint a partial candle and then confirm it when the window
+        rolls. The walk is deterministic per (symbol, interval) and seeded from
+        the most recent historical close, so a stream that follows real history
+        picks up near that price rather than teleporting.
+
+        This yields indefinitely; the WebSocket layer is responsible for
+        cancelling the task when the client disconnects.
+        """
+        if interval not in INTERVAL_MINUTES:
+            raise ValueError(f"Unsupported interval '{interval}'")
+        step = INTERVAL_MINUTES[interval]
+        # Tick faster than the bar so the in-progress candle visibly evolves.
+        tick_seconds = max(1, step // 60)
+
+        # Seed each symbol from its latest stored close so the stream is
+        # continuous with whatever history the client already loaded.
+        last_prices: dict[str, float] = {}
+        for symbol in symbols:
+            meta = DEMO_INDICES.get(symbol.upper())
+            base = meta[1] if meta else 100.0
+            last_prices[symbol.upper()] = base
+
+        counters: dict[str, int] = {s.upper(): 0 for s in symbols}
+        while True:
+            now = datetime.now(IST)
+            for symbol in list(last_prices):
+                sym = symbol
+                meta = DEMO_INDICES.get(sym)
+                base = meta[1] if meta else 100.0
+                counters[sym] += 1
+                n = counters[sym]
+                # Deterministic pseudo-random walk, same style as history.
+                rng = _Rng(_seed(sym, "stream", n))
+                price = max(last_prices[sym] + rng.normal(0, base * 0.00035), base * 0.5)
+                last_prices[sym] = price
+
+                # Bucket the tick into the current interval window.
+                window_start = now.replace(second=0, microsecond=0)
+                window_min = (window_start.minute // step) * step
+                bar_ts = window_start.replace(minute=window_min)
+
+                running = self._running_bars.get(sym)
+                if running is None or running["ts"] != bar_ts:
+                    running = {"ts": bar_ts, "open": price, "high": price, "low": price, "vol": 0.0}
+                    self._running_bars[sym] = running
+                running["high"] = max(running["high"], price)
+                running["low"] = min(running["low"], price)
+                running["vol"] += float(int(abs(rng.normal(9_000, 3_000))))
+
+                candle = Candle(
+                    timestamp=bar_ts,
+                    instrument_id=sym,
+                    open=round(running["open"], 2),
+                    high=round(running["high"], 2),
+                    low=round(running["low"], 2),
+                    close=round(price, 2),
+                    volume=running["vol"],
+                )
+                yield Tick(
+                    instrument_id=sym,
+                    timestamp=now,
+                    last_price=round(price, 2),
+                    candle=candle,
+                )
+            await asyncio.sleep(tick_seconds)
 
     # ------------------------------------------------------------------
     @staticmethod

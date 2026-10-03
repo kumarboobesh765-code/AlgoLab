@@ -20,6 +20,7 @@ from app.api.v1 import (
     reports,
     strategies,
     strategies_polish,
+    stream,
     tax,
     webhooks,
 )
@@ -35,6 +36,7 @@ api_router.include_router(basket.router)
 api_router.include_router(execution.router)
 api_router.include_router(data.router)
 api_router.include_router(quant.router)
+api_router.include_router(stream.router)
 api_router.include_router(ai.router)
 api_router.include_router(backtests.router)
 api_router.include_router(paper.router)

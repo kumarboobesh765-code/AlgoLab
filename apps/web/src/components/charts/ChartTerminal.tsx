@@ -17,6 +17,7 @@ import {
   type QuantCatalog,
   type QuantSeriesResponse,
 } from "@/lib/api";
+import { useMarketStream } from "@/lib/useMarketStream";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 
@@ -38,6 +39,8 @@ const OSCILLATOR_TYPES = new Set([
   "CMO", "PPO", "AO", "AROON", "DPO", "STOCHRSI", "HV", "NATR",
 ]);
 const BAND_TYPES = new Set(["BBANDS", "DONCHIAN", "KC"]);
+// Volume-derived accumulations. Their magnitudes dwarf price, so plotting them
+// on the candle pane would flatten the candles; they get their own pane instead.
 const CUMULATIVE_TYPES = new Set(["OBV", "AD", "PVT", "NVI"]);
 
 const PALETTE = [
@@ -89,6 +92,10 @@ export default function ChartTerminalPage() {
   const [hover, setHover] = useState<ChartCandle | null>(null);
   const [showVolume, setShowVolume] = useState(true);
   const [picker, setPicker] = useState("");
+  const [live, setLive] = useState(false);
+
+  const stream = useMarketStream(live ? [symbol] : [], "1m");
+  const liveTick = live ? stream.ticks[symbol] : undefined;
 
   const tokens = useMemo(
     () => overlays.map(buildToken).filter(Boolean),
@@ -242,8 +249,10 @@ export default function ChartTerminalPage() {
       const color = PALETTE[i % PALETTE.length];
       const type = token.split(":")[0].toUpperCase();
       const oscPane = OSCILLATOR_TYPES.has(type);
-      const pane = oscPane ? paneIndex++ : 0;
-      const target = BAND_TYPES.has(type) || CUMULATIVE_TYPES.has(type) ? "HistogramSeries" : "LineSeries";
+      const pane = oscPane || CUMULATIVE_TYPES.has(type) ? paneIndex++ : 0;
+      // Bands need upper/mid/lower handling below, so they are drawn in a
+      // separate pass rather than as generic lines.
+      const isBand = BAND_TYPES.has(type);
 
       for (const [outName, values] of Object.entries(outputs)) {
         const points = values
@@ -252,7 +261,7 @@ export default function ChartTerminalPage() {
           )
           .filter((p): p is { time: Time; value: number } => p !== null);
 
-        if (target === "HistogramSeries") continue; // bands drawn as lines below
+        if (isBand) continue; // bands drawn as lines below
         const s = chart.addSeries(
           LineSeries,
           {
@@ -308,6 +317,31 @@ export default function ChartTerminalPage() {
 
     chart.timeScale().fitContent();
   }, [data, showVolume]);
+
+  // ---- live bar ------------------------------------------------------
+  // update() mutates only the trailing bar, so the loaded history and every
+  // indicator overlay stay intact instead of being rebuilt on each tick.
+  useEffect(() => {
+    const chart = chartRef.current;
+    const c = candlesRef.current;
+    const tick = liveTick;
+    if (!chart || !c || !tick) return;
+    const bar = tick.candle;
+    c.update({
+      time: bar.time as Time,
+      open: bar.open,
+      high: bar.high,
+      low: bar.low,
+      close: bar.close,
+    });
+    if (volRef.current) {
+      volRef.current.update({
+        time: bar.time as Time,
+        value: bar.volume,
+        color: bar.close >= bar.open ? "#16a34a55" : "#dc262655",
+      });
+    }
+  }, [liveTick]);
 
   // ---- crosshair readout ---------------------------------------------
   useEffect(() => {
@@ -405,6 +439,36 @@ export default function ChartTerminalPage() {
           />
           Volume
         </label>
+        <label className="flex items-center gap-1.5 pb-1.5 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={live}
+            onChange={(e) => setLive(e.target.checked)}
+          />
+          Live
+        </label>
+        {live && (
+          <span className="pb-1.5 text-xs text-slate-500">
+            {stream.connected ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+                streaming
+                {liveTick && (
+                  <span className="font-mono text-slate-700">
+                    {liveTick.last_price.toFixed(2)}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-amber-600">
+                {stream.error ?? "connecting…"}
+              </span>
+            )}
+          </span>
+        )}
+        {live && stream.supportsStreaming === false && (
+          <Badge tone="amber">no live feed on this provider</Badge>
+        )}
         {data?.is_demo && <Badge tone="amber">demo data</Badge>}
       </div>
 

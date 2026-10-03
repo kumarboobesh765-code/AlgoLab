@@ -39,6 +39,21 @@ class ProviderError(Exception):
     """Raised when a market-data provider is unavailable, misconfigured or fails."""
 
 
+@dataclass(slots=True)
+class Tick:
+    """A single live price update for one instrument.
+
+    `candle` is the in-progress bar for the subscribed interval: it carries the
+    running open/high/low/close so a consumer can paint a partial bar without
+    waiting for the interval to close.
+    """
+
+    instrument_id: str
+    timestamp: datetime
+    last_price: float
+    candle: Candle
+
+
 class MarketDataProvider(ABC):
     """Base interface every market-data adapter must implement.
 
@@ -62,3 +77,18 @@ class MarketDataProvider(ABC):
     @abstractmethod
     async def get_option_chain(self, underlying: str, expiry: str | None = None) -> dict:
         """Return a normalized option chain snapshot."""
+
+    async def stream_ticks(self, symbols: list[str], interval: str):
+        """Yield ticks for `symbols` until the caller stops consuming.
+
+        Optional: providers without a live feed raise NotImplementedError and the
+        API falls back to the scheduler-driven stored-candle path, so this stays
+        off the abstract base and no existing adapter breaks. Declared as an
+        async generator so a caller can always ``async for`` it.
+        """
+        raise NotImplementedError(f"{self.name} does not support tick streaming")
+        yield  # pragma: no cover - unreachable, marks this an async generator
+
+    async def supports_streaming(self) -> bool:
+        """Whether stream_ticks can actually serve requests for this provider."""
+        return False
