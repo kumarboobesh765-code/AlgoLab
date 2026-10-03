@@ -41,3 +41,5 @@ next-env.d.ts
 # Playwright
 apps/web/test-results/
 apps/web/playwright-report/
+
+tmp_*.py
