@@ -113,10 +113,57 @@ def _jsonable(values: list[float]) -> list[float | None]:
     return [None if v != v else v for v in values]
 
 
+# Session minutes per trading day, and the fraction of a day that is market hours.
+_SESSION_MINUTES = 375
+
+
+def _series_history_days(bars: int, interval: str) -> int:
+    """How much history to read to satisfy a `bars` request.
+
+    Derived from the requested bar count and timeframe rather than fixed at 60
+    days, so a small chart does not pay for months of history. Trading days are
+    roughly 5/7 of calendar days, and a margin is added for holidays and gaps.
+    """
+    bars_per_day = max(1, _SESSION_MINUTES // max(1, _minutes_per_interval(interval)))
+    sessions = bars / bars_per_day
+    days = int(sessions * 7 / 5) + 5
+    return max(10, min(days, 400))
+
+
+def _minutes_per_interval(interval: str) -> int:
+    return {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 1440}.get(interval, 5)
+
+
+async def _load_series_candles(db, provider, symbol: str, interval: str, start, end):
+    """Prefer stored candles; fall back to the provider.
+
+    Reading from the store is a single indexed query and keeps the chart
+    consistent with what the backtester saw. The provider path stays as a
+    fallback so the terminal still works before any history is ingested.
+    """
+    from app.services.candles import load_candles
+
+    try:
+        stored = await load_candles(
+            db, symbol=symbol, interval=interval, start=start, end=end
+        )
+    except Exception:
+        stored = []
+    if stored:
+        return stored
+    try:
+        return await provider.get_historical_data(symbol, interval, start, end)
+    except ProviderError:
+        raise
+    except ValueError:
+        return []
+
+
 @router.get("/series")
 async def indicator_series(
     user: CurrentUser,
     provider: ProviderDep,
+    db: DbSession,
     symbol: str = Query(default="NIFTY"),
     interval: str = Query(default="5m"),
     indicators: str = Query(default=""),
@@ -128,17 +175,19 @@ async def indicator_series(
     this returns the full computed series so a chart terminal can draw
     overlays that line up exactly with the price bars.
 
+    Reads stored candles when they exist and falls back to the provider, matching
+    how the backtester and /quant/preview load data. Fetching from the provider
+    meant generating 60 days of synthetic candles on every single request - about
+    160 ms of work - and then discarding all but the last `bars`, so a request for
+    20 bars cost the same as a request for 2000.
+
     `indicators` is a comma-separated list of ``TYPE`` or ``TYPE:k=v`` specs.
     """
     tokens = _split_indicator_tokens(indicators)
     end = datetime.now(UTC)
-    start = end - timedelta(days=60)
-    try:
-        candles = await provider.get_historical_data(symbol, interval, start, end)
-    except ProviderError:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    # Ask the store for a little more than we need so the tail is always covered.
+    start = end - timedelta(days=_series_history_days(bars, interval))
+    candles = await _load_series_candles(db, provider, symbol, interval, start, end)
     if not candles:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No candles for {symbol} {interval}")
     candles = candles[-bars:]
