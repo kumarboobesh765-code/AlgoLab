@@ -640,6 +640,34 @@ Nothing in the feature table is left unbuilt. The outstanding work is the
   credentials. Dhan access tokens are **daily** and must be regenerated each
   trading day.
 
+  ### Verified capability audit (live account, read-only)
+
+  Account `dataPlan` reports **Deactive**, which is the root cause of everything
+  below.
+
+  | Works | Empty | Unavailable (404 — paid data gate) |
+  |---|---|---|
+  | `/v2/profile`, `/v2/fundlimit`, `/v2/positions`, `/v2/holdings`, `/v2/orders`, `/v2/trades` | holdings/order/trade books | `/v2/marketquote`, `/v2/marketdepth`, `/v2/historicaldaily`, `/v2/intraday`, `/v2/optionchain`, `/v2/nonNegotiable`, `/v2/taxstatement` |
+
+  So Dhan is usable as a **live trading broker** (order lifecycle and account
+  state all work, and `activeSegment: E, D, C, M` means equity and derivatives
+  permissions are enabled), but **not as a market-data source** without a paid
+  data plan.
+
+  Two further findings:
+  - `DhanProvider.get_instruments()` **does work** and returns 108k real
+    instruments, so the instrument master is obtainable; the price feed behind it
+    is not.
+  - `DhanProvider.get_historical_data()` calls `POST /charts/period`, which 404s
+    on the live API, so the provider's chart path is currently broken regardless
+    of plan. `get_option_chain()` is broken the same way. Both need their
+    endpoints corrected before a data plan would make them work.
+  - `/v2/securitymaster` answers **HTTP 200 with the body `Not Ok`**, so a
+    status-code-only check treats a broken response as success.
+
+  Charting and backtesting are unaffected: they run off the stored-candle /
+  demo provider layer, not the broker.
+
   Credentials are read as `<BROKER>_CLIENT_ID` / `_API_KEY` / `_ACCESS_TOKEN` /
   `_USER_EMAIL` from the environment. `_broker_config` previously mapped only
   Zerodha, so every other gateway sent an empty token; that is fixed and covered
