@@ -1,3 +1,5 @@
+import time
+
 from fastapi import APIRouter
 from sqlalchemy import text
 
@@ -7,17 +9,31 @@ from app.marketdata.base import ProviderError
 
 router = APIRouter(tags=["system"])
 
+# The database check is cached for a few seconds. /health is polled on every app
+# mount - and twice per mount under React StrictMode - so an unconditional
+# SELECT 1 put a database round trip in front of every page load for a value
+# that cannot meaningfully change faster than this.
+_DB_CHECK_INTERVAL_SECONDS = 5.0
+_last_db_check = 0.0
+_db_ok = True
+
 
 @router.get("/health")
 async def health(db: DbSession) -> dict:
     """Liveness/readiness probe. Reports infra + provider status honestly."""
+    global _last_db_check, _db_ok
+
     settings = get_settings()
 
-    database_status = "ok"
-    try:
-        await db.execute(text("SELECT 1"))
-    except Exception:
-        database_status = "error"
+    now = time.monotonic()
+    if now - _last_db_check > _DB_CHECK_INTERVAL_SECONDS:
+        _last_db_check = now
+        try:
+            await db.execute(text("SELECT 1"))
+            _db_ok = True
+        except Exception:
+            _db_ok = False
+    database_status = "ok" if _db_ok else "error"
 
     provider_configured = True
     provider_name = settings.MARKET_DATA_PROVIDER
