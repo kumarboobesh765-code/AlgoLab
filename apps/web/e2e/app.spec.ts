@@ -9,8 +9,11 @@ test.describe("auth", () => {
     await page.getByPlaceholder("Password (min 8 characters)").fill("secret123");
     await page.getByPlaceholder("Password (min 8 characters)").press("Enter");
 
-    // Mock auth resolves immediately → app shell renders
-    await expect(page.locator("aside")).toBeVisible({ timeout: 15_000 });
+    // Mock auth resolves immediately -> app shell renders.
+    // Assert on the sidebar's <nav> landmark rather than "aside": the shell
+    // has two <aside> elements (mobile drawer + desktop sidebar), so a bare
+    // aside selector is ambiguous and a brand-text selector breaks on rewording.
+    await expect(page.locator("nav").first()).toBeVisible({ timeout: 15_000 });
   });
 });
 
@@ -24,8 +27,7 @@ test.describe("core navigation", () => {
 
   test("dashboard loads with sidebar and onboarding or metrics", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText("STRATEGYLAB", { exact: true })).toBeVisible();
-    await expect(page.locator("aside")).toBeVisible();
+    await expect(page.locator("nav").first()).toBeVisible();
   });
 
   test("strategy library lists mock strategies", async ({ page }) => {
@@ -54,9 +56,23 @@ test.describe("core navigation", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     const hamburger = page.getByLabel("Open menu");
-    if (await hamburger.isVisible()) {
-      await hamburger.click();
-      await expect(page.locator("aside")).toBeVisible();
-    }
+    await expect(hamburger).toBeVisible({ timeout: 20_000 });
+
+    // The menu button is server-rendered but its click handler only attaches
+    // once React hydrates, so isVisible() passes while the button is inert.
+    // Polling for the drawer's own scrim is equivalent to waiting for the
+    // handler to be live, without a fixed sleep that would mask real failures.
+    await expect
+      .poll(async () => {
+        await hamburger.click();
+        return page.locator("div.fixed.inset-0").count();
+      }, { timeout: 20_000 })
+      .toBeGreaterThan(0);
+
+    // The drawer is a separate component from the desktop sidebar. At this
+    // width the sidebar's <nav> still exists but is off-canvas with no bounding
+    // box, so nav.first() would match an invisible element.
+    await expect(page.locator("aside").first()).toBeVisible();
+    await expect(page.getByText("Start paper trade").first()).toBeVisible();
   });
 });
