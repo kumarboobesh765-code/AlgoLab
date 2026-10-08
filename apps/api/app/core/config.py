@@ -55,7 +55,15 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_INTERVAL_SEC: int = 60
 
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    # Browser origins allowed to call the API. Comma-separated rather than a
+    # JSON list, because a bare list field forces operators to quote JSON in .env
+    # and the failure mode is a confusing startup error. Parsed by the property
+    # below; keep this in sync with DEFAULT_CORS_ORIGINS.
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     # SEBI retail-algo framework: broker APIs must only be reachable from
     # static IPs whitelisted with the broker. Comma-separated; empty disables

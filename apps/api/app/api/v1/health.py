@@ -54,6 +54,9 @@ async def health(db: DbSession) -> dict:
         "market_data_provider": provider_name,
         "market_data_is_demo": is_demo,
         "market_data_provider_configured": provider_configured,
+        # Surfaced so a CORS failure is diagnosable from the browser console
+        # rather than requiring someone to read the API's config.
+        "allowed_origins": settings.cors_origins,
         "trading_mode": "paper_only",
         "live_trading_available": False,
     }
